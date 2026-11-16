@@ -68,7 +68,7 @@ function placeholderAd({ title, seconds, skippable }) {
 const platform = {
   showInterstitial: () => placeholderAd({ title: 'Advertisement', seconds: 3, skippable: false }),
   showRewarded: () => placeholderAd({ title: 'Watch to earn your reward', seconds: 4, skippable: true }),
-  purchaseRemoveAds: async () => window.confirm('Remove ads for $2.99? (test purchase, no charge)'),
+  purchaseRemoveAds: async () => window.__TEST_PURCHASE || window.confirm('Remove ads for $2.99? (test purchase, no charge)'),
 };
 
 export const Ads = {
