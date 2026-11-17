@@ -64,6 +64,12 @@ npm run build    # production build in dist/
   small (radius 84 with a Mars) and grows on screen with a ripple each time a bigger body
   appears, up to its full size at the Blue Giant; past that the view pulls back instead
   (0.88 for the Supernova, 0.78 for the Pulsar). A new universe starts small again
+- The ring is alive: a soft glow, three lights with tails running round it, and a colour
+  that moves from lavender through sky blue and mint (planets) to gold, orange, pink and
+  violet (stars). Every time it grows it flashes white and spins up, sparks burst out all
+  the way round, two waves run past the new edge and RING UP pops up in its new colour.
+  It pulses red, with racing lights, while a planet counts down, flashes green on a revive
+  and cyan when a new universe begins
 - Laser booster: tap a planet, and a satellite vaporizes every planet of that kind, one
   beam after another
 - Fusion booster: every matching pair lifts off, flies over the others to its partner and

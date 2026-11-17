@@ -129,6 +129,25 @@ function mix(c1, c2, t) {
   const m = (s) => Math.round(ch(c1, s) + (ch(c2, s) - ch(c1, s)) * t);
   return (m(16) << 16) | (m(8) << 8) | m(0);
 }
+// The ring's colour moves through this palette as the universe grows: cool for planets, warm for stars.
+const RING_COLORS = [
+  [2, 0xc9bcff],
+  [5, 0x9fd4ff],
+  [8, 0x8ff0d2],
+  [9, 0xffe08a],
+  [11, 0xffad80],
+  [12, 0xff9ad5],
+  [13, 0xc9a8ff],
+];
+function ringColor(tier) {
+  if (tier <= RING_COLORS[0][0]) return RING_COLORS[0][1];
+  for (let i = 1; i < RING_COLORS.length; i++) {
+    const [t0, c0] = RING_COLORS[i - 1];
+    const [t1, c1] = RING_COLORS[i];
+    if (tier <= t1) return mix(c0, c1, (tier - t0) / (t1 - t0));
+  }
+  return RING_COLORS[RING_COLORS.length - 1][1];
+}
 const powerColor = (p) => (p < 0.5 ? mix(0x7fe3ff, 0xffd84a, p * 2) : mix(0xffd84a, 0xff5a4d, (p - 0.5) * 2));
 
 export class GameScene extends Phaser.Scene {
@@ -169,6 +188,13 @@ export class GameScene extends Phaser.Scene {
     this.reviveRing = 0; // a revive makes the ring one step bigger than the field has earned yet
     this.ringR = RING[2]; // the ring's radius in field units; follows ringTarget() smoothly
     this.ringDrawnAt = -1;
+    this.ringKey = '';
+    this.ringFlash = 0; // 1 right after the ring grows, fading to 0
+    this.ringFlashColor = 0xffffff;
+    this.ringSpin = 0; // the dashes spin up when the ring grows, then settle
+    this.ringSpinV = 0;
+    this.ringPhase = 0; // where the lights running round the ring are
+    this.ringDanger = false;
     this.aimAngle = Math.PI / 2;
     this.aiming = false;
     this.pulled = false;
@@ -402,11 +428,12 @@ export class GameScene extends Phaser.Scene {
   }
 
   buildField() {
+    this.ringGlow = this.add.graphics().setBlendMode(Phaser.BlendModes.ADD);
     this.ringDecor = this.add.graphics();
     this.limitRing = this.add.graphics();
-    this.limitColor = 0xc9bcff;
-    this.drawRing();
-    this.limitRing.setAlpha(0.55);
+    this.ringTrail = this.add.graphics().setBlendMode(Phaser.BlendModes.ADD);
+    // a few lights run round the ring all the time
+    this.ringLights = [0, 1, 2].map(() => this.add.image(0, 0, 'soft').setScale(0.2 / TEX_SCALE).setBlendMode(Phaser.BlendModes.ADD));
     const well = this.add.image(0, 0, 'soft').setScale(2.6 / TEX_SCALE).setTint(0x9f6bff).setAlpha(0.55).setBlendMode(Phaser.BlendModes.ADD);
     this.tweens.add({ targets: well, scale: 3.3 / TEX_SCALE, alpha: 0.3, duration: 1500, yoyo: true, repeat: -1, ease: 'Sine.inOut' });
     // the heart of the well
@@ -414,45 +441,136 @@ export class GameScene extends Phaser.Scene {
     const coreBall = this.add.circle(0, 0, 9, 0xf6f0ff);
     this.tweens.add({ targets: coreGlow, scale: 0.95 / TEX_SCALE, duration: 900, yoyo: true, repeat: -1, ease: 'Sine.inOut' });
     this.coreParts = [coreGlow, coreBall];
-    this.ringLayer.add([this.ringDecor, this.limitRing, well, coreGlow, coreBall]);
+    this.ringLayer.add([this.ringGlow, this.ringDecor, this.limitRing, this.ringTrail, ...this.ringLights, well, coreGlow, coreBall]);
+    this.updateRing(0, 0);
   }
 
-  /** The dashed ring, the launch orbit and the faint guide circles, at the ring's current size. */
-  drawRing() {
+  /**
+   * The ring, every frame. Its glow and dashes follow its size and colour, three lights run round
+   * it, it pulses red while a planet is counting down, and right after it grows it flashes,
+   * thickens and spins up for a moment.
+   */
+  updateRing(now, dt) {
     const R = this.ringScreen();
-    this.ringDrawnAt = R;
-    const g = this.ringDecor;
-    g.clear();
-    g.lineStyle(3, 0xffffff, 0.07);
-    g.strokeCircle(0, 0, R + ORBIT_GAP);
-    g.lineStyle(2, 0x9f8cff, 0.1);
-    g.strokeCircle(0, 0, R * 0.66);
-    g.strokeCircle(0, 0, R * 0.33);
-    this.drawLimitRing(this.limitColor);
-  }
-
-  drawLimitRing(color) {
-    const g = this.limitRing;
-    const R = this.ringScreen();
-    g.clear();
-    g.lineStyle(4, color, 1);
-    const n = Math.max(20, Math.round(R * 0.175));
-    for (let i = 0; i < n; i++) {
-      const a0 = (i / n) * Math.PI * 2;
-      g.beginPath();
-      g.arc(0, 0, R, a0, a0 + (Math.PI * 2) / n / 2, false);
-      g.strokePath();
+    this.ringFlash = Math.max(0, this.ringFlash - dt / 900);
+    this.ringSpinV *= Math.pow(0.08, dt / 1000);
+    this.ringSpin += (this.ringSpinV * dt) / 1000;
+    this.limitRing.rotation = this.ringSpin;
+    const f = this.ringFlash;
+    const base = this.ringDanger ? 0xff5d73 : ringColor(this.runMax);
+    const color = f > 0 ? mix(base, this.ringFlashColor, f * 0.8) : base;
+    const width = 4 + 5 * f;
+    const key = `${R.toFixed(1)}|${color}|${width.toFixed(1)}`;
+    if (key !== this.ringKey) {
+      this.ringKey = key;
+      const g = this.limitRing;
+      g.clear();
+      g.lineStyle(width, color, 1);
+      const n = Math.max(20, Math.round(R * 0.175));
+      for (let i = 0; i < n; i++) {
+        const a0 = (i / n) * Math.PI * 2;
+        g.beginPath();
+        g.arc(0, 0, R, a0, a0 + (Math.PI * 2) / n / 2, false);
+        g.strokePath();
+      }
+      const gl = this.ringGlow;
+      gl.clear();
+      gl.lineStyle(20 + 34 * f, color, 0.05 + 0.2 * f);
+      gl.strokeCircle(0, 0, R);
+      gl.lineStyle(9 + 10 * f, color, 0.08 + 0.3 * f);
+      gl.strokeCircle(0, 0, R);
     }
-    this.limitColor = color;
+    if (Math.abs(R - this.ringDrawnAt) > 0.25) {
+      // the launch orbit and the faint guide circles
+      this.ringDrawnAt = R;
+      const d = this.ringDecor;
+      d.clear();
+      d.lineStyle(3, 0xffffff, 0.07);
+      d.strokeCircle(0, 0, R + ORBIT_GAP);
+      d.lineStyle(2, 0x9f8cff, 0.1);
+      d.strokeCircle(0, 0, R * 0.66);
+      d.strokeCircle(0, 0, R * 0.33);
+    }
+    const throb = Math.abs(Math.sin(now / 110));
+    this.limitRing.setAlpha(this.ringDanger ? 0.6 + 0.4 * throb : Math.min(1, 0.6 + 0.4 * f));
+    this.ringGlow.setAlpha(this.ringDanger ? 0.6 + 0.4 * throb : 1);
+    // the lights, each with a short fading tail; they race while a planet is counting down
+    this.ringPhase += ((this.ringDanger ? 1.8 : 0.5) * dt) / 1000;
+    const t = this.ringTrail;
+    t.clear();
+    const lights = this.ringLights;
+    for (let i = 0; i < lights.length; i++) {
+      const a = this.ringPhase * (1 + i * 0.15) + (i * Math.PI * 2) / lights.length + this.ringSpin;
+      lights[i]
+        .setPosition(Math.cos(a) * R, Math.sin(a) * R)
+        .setTint(color)
+        .setAlpha(0.55 + 0.35 * f + 0.25 * Math.sin(now / 260 + i * 2));
+      for (let k = 0; k < 7; k++) {
+        t.lineStyle(3 + 2 * f, color, 0.42 * (1 - k / 7));
+        t.beginPath();
+        t.arc(0, 0, R, a - (k + 1) * 0.045, a - k * 0.045, false);
+        t.strokePath();
+      }
+    }
   }
 
-  /** A bigger body was made: the ring grows to give the next merge room, with a ripple to show it. */
+  /**
+   * A bigger body was made, and the ring grows to give the next merge room. It shows every time:
+   * the ring flashes white and spins up, sparks burst out of it all the way round, two waves run
+   * out to the new edge, and RING UP pops up above it in the ring's new colour.
+   */
   ringGrowFx() {
     const from = this.ringScreen();
-    const to = Math.min(RING_SCREEN_MAX, this.ringTarget()) + 18;
-    const ripple = this.add.circle(CX, CY, from).setStrokeStyle(7, 0xd9ccff, 0.9).setDepth(FX);
-    this.tweens.add({ targets: ripple, radius: to, alpha: 0, duration: 900, ease: 'Cubic.out', onComplete: () => ripple.destroy() });
+    const to = Math.min(RING_SCREEN_MAX, this.ringTarget());
+    const color = ringColor(this.runMax);
+    this.ringFlash = 1;
+    this.ringFlashColor = 0xffffff;
+    this.ringSpinV = 5;
+    // two waves run out past the new edge: they move fast at first, and stay bright until late
+    for (const [width, alpha, past, ms, tint] of [[6, 1, 40, 900, 0xffffff], [26, 0.45, 72, 1300, color]]) {
+      const wave = this.add.circle(CX, CY, from).setStrokeStyle(width, tint, alpha).setDepth(FX).setBlendMode(Phaser.BlendModes.ADD);
+      this.tweens.add({
+        targets: wave,
+        props: { radius: { value: to + past, ease: 'Cubic.out' }, alpha: { value: 0, ease: 'Quad.in' } },
+        duration: ms,
+        onComplete: () => wave.destroy(),
+      });
+    }
+    // sparks burst out of the whole ring
+    const n = 44;
+    for (let i = 0; i < n; i++) {
+      const a = (i / n) * Math.PI * 2 + Math.random() * 0.1;
+      const r1 = to + 30 + Math.random() * 60;
+      const star = i % 3 === 0;
+      const sp = this.add
+        .image(CX + Math.cos(a) * from, CY + Math.sin(a) * from, star ? 'spark' : 'dot')
+        .setTint(i % 2 ? color : 0xffffff)
+        .setScale((star ? 0.95 : 0.75) / TEX_SCALE)
+        .setDepth(FX)
+        .setBlendMode(Phaser.BlendModes.ADD);
+      this.tweens.add({
+        targets: sp,
+        props: {
+          x: { value: CX + Math.cos(a) * r1, ease: 'Cubic.out' },
+          y: { value: CY + Math.sin(a) * r1, ease: 'Cubic.out' },
+          alpha: { value: 0, ease: 'Quad.in' },
+          scale: { value: 0.15 / TEX_SCALE, ease: 'Quad.in' },
+          angle: { value: 200, ease: 'Linear' },
+        },
+        duration: 850 + Math.random() * 450,
+        onComplete: () => sp.destroy(),
+      });
+    }
+    const y = Math.max(372, CY - to - 30);
+    const label = this.text(CX, y, 'RING UP', 30, '#' + color.toString(16).padStart(6, '0'))
+      .setOrigin(0.5)
+      .setDepth(FX + 1)
+      .setStroke('#150a33', 6)
+      .setScale(0.4);
+    this.tweens.add({ targets: label, scale: 1, duration: 280, ease: 'Back.out' });
+    this.tweens.add({ targets: label, y: y - 34, alpha: 0, delay: 700, duration: 450, ease: 'Cubic.in', onComplete: () => label.destroy() });
     Sfx.ringGrow();
+    Haptics.medium();
   }
 
   buildHud() {
@@ -1910,6 +2028,9 @@ export class GameScene extends Phaser.Scene {
     this.universeMax = 0; // a new, small universe: the ring shrinks back and small planets come again
     this.runMax = 2;
     this.reviveRing = 0;
+    this.ringFlash = 0.8;
+    this.ringFlashColor = 0x7fe3ff;
+    this.ringSpinV = -4;
     this.nextKind = this.rollTier();
     this.refreshNext();
     this.tweens.add({ targets: this.coreParts, alpha: 1, duration: 600 });
@@ -2076,7 +2197,7 @@ export class GameScene extends Phaser.Scene {
     const target = this.ringTarget();
     if (Math.abs(target - this.ringR) > 0.02) this.ringR += (target - this.ringR) * Math.min(1, Math.min(delta, 50) / 380);
     this.fieldScale = Math.min(1, RING_SCREEN_MAX / this.ringR);
-    if (Math.abs(this.ringScreen() - this.ringDrawnAt) > 0.25) this.drawRing();
+    this.updateRing(now, Math.min(delta, 50));
     for (const layer of [this.backLayer, this.batch, this.frontLayer]) layer.setScale(this.fieldScale).setRotation(this.worldRot);
     this.ringLayer.rotation = this.worldRot;
     this.updateHeld();
@@ -2133,8 +2254,7 @@ export class GameScene extends Phaser.Scene {
       if (p.dangerMs > 0 && (!worst || p.dangerMs > worst.dangerMs)) worst = p;
     }
     const danger = !!worst;
-    if (danger !== (this.limitColor === 0xff5d73)) this.drawLimitRing(danger ? 0xff5d73 : 0xc9bcff);
-    this.limitRing.setAlpha(danger ? 0.6 + 0.4 * Math.abs(Math.sin(now / 110)) : 0.55);
+    this.ringDanger = danger;
     this.worstDanger = worst;
     if (worst && worst.dangerMs > DANGER_LIMIT_MS) this.gameOver(worst);
   }
@@ -2395,6 +2515,9 @@ export class GameScene extends Phaser.Scene {
     }
     this.gravBoostUntil = now + 1500;
     this.calmUntil = now + 2500;
+    this.ringFlash = 1;
+    this.ringFlashColor = 0x8ce99a;
+    this.ringSpinV = 7;
     this.combo = 0;
     this.acc = 0;
     // the surge: waves of light run from the well out past the new edge
