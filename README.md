@@ -3,9 +3,11 @@
 A lightweight merge game prototype (Phaser 3 + Vite), intended to be packaged for
 iOS and Android with Capacitor.
 
-A gravity well sits in the middle of the screen. Press anywhere and pull back like a
-slingshot: the direction of the pull picks where on the outer orbit the planet starts,
-and the length of the pull sets how hard it is launched toward the centre. Two of the
+A gravity well sits in the middle of the screen. Tap to drop the next planet from that
+side of the outer orbit and let gravity pull it in, or press anywhere and pull back like
+a slingshot: the direction of the pull picks where on the orbit the planet starts, and
+the length of the pull sets how hard it is launched toward the centre. Full power is
+always reachable before the finger meets the edge of the screen. Two of the
 same kind merge into the next body in a 12-step chain that runs from an asteroid to a
 supernova. Two supernovas collapse into a black hole, which swallows the whole field
 and starts a new universe with a higher score multiplier.
@@ -25,7 +27,10 @@ npm run build    # production build in dist/
 - `src/Planet.js` – one planet: a hard physics core wrapped in a springy skin, plus
   the springs that make its picture squash, stretch and wobble
 - `src/PlanetBatch.js` – draws planets as deforming textured meshes (WebGL)
-- `src/art.js` – the chain and all procedural art (no image files)
+- `src/art.js` – the chain and all procedural art (no image files). Planet surfaces are
+  rendered per pixel as noise-textured spheres; a separate lighting layer adds the
+  day/night terminator, atmosphere glow and highlight, and stays fixed while planets turn.
+  The small bodies are textured before the first frame, the big ones in the background
 - `src/ads.js` – ad and purchase layer. Uses placeholder overlays in the browser;
   replace the `platform` functions with real SDK calls for the store build
 - `src/haptics.js` – vibration (Capacitor Haptics in the store build, browser fallbacks)
@@ -47,7 +52,12 @@ npm run build    # production build in dist/
   hits. It cannot upgrade the biggest planet on the field (it bounces off, and the aim
   line turns red beforehand), and each comet costs more charge than the last, so
   comets help smaller planets catch up but cannot carry one planet to a black hole
-- Boosters: one bomb and one shake per game, more through rewarded ads
+- Orbital laser booster: pick any planet and a satellite vaporizes it
+- Rogue planet booster: a huge wandering planet crosses the field and knocks everything
+  aside; gravity then gathers the planets back into a new arrangement
+- One of each booster per game, more through rewarded ads
+- Buttons only react when the press starts on them, so a pull that ends over the bottom
+  bar never triggers it
 - Swap: tap the NEXT planet to exchange it with the one waiting on the ring
 - The field slowly rotates, so timing matters
 

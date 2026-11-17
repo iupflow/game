@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { PAD, SHADE_R } from './art.js';
+import { PAD } from './art.js';
 
 // Draws every planet as a textured mesh: a centre point, an inner ring and the
 // outline. The texture coordinates stay fixed while the vertices move, so the
@@ -18,7 +18,7 @@ const iy = new Float32Array(MAX_K);
 const iu = new Float32Array(MAX_K);
 const iv = new Float32Array(MAX_K);
 
-const getTint = Phaser.Renderer.WebGL.Utils.getTintAppendFloatAlpha;
+const getTint = Phaser.Renderer.WebGL.Utils.getTintAppendFloatAlphaAndSwap; // takes 0xRRGGBB
 
 export class PlanetBatch extends Phaser.GameObjects.Image {
   constructor(scene, x, y) {
@@ -33,10 +33,10 @@ export class PlanetBatch extends Phaser.GameObjects.Image {
     const m = Phaser.GameObjects.GetCalcMatrix(src, camera, parentMatrix).calc;
     renderer.pipelines.preBatch(src);
     for (const p of src.planets) {
-      const tint = getTint(0xffffff, camera.alpha * src.alpha * p.alpha);
-      src.drawMesh(pipeline, m, p, p.frame, p.rot, p.r, p.r + PAD, tint);
+      const alpha = camera.alpha * src.alpha * p.alpha;
+      src.drawMesh(pipeline, m, p, p.frame, p.rot, p.r, p.r + PAD, getTint(p.tint, alpha));
       // lighting stays put on screen while the planet and the field turn underneath
-      if (p.lightFrame) src.drawMesh(pipeline, m, p, p.lightFrame, -src.rotation, SHADE_R, SHADE_R + PAD, tint);
+      if (p.lightFrame) src.drawMesh(pipeline, m, p, p.lightFrame, -src.rotation, p.r, p.r + PAD, getTint(0xffffff, alpha));
     }
     renderer.pipelines.postBatch(src);
   }

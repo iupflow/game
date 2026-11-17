@@ -58,12 +58,24 @@ export const Sfx = {
   bonk() {
     tone(180, 0.12, 'triangle', 0.12, 120);
   },
+  laserCharge() {
+    tone(260, 0.5, 'sawtooth', 0.04, 1300);
+    tone(520, 0.5, 'sine', 0.05, 2000, 0.1);
+  },
+  laserFire() {
+    tone(1500, 0.55, 'square', 0.035, 650);
+    tone(170, 0.55, 'sawtooth', 0.07, 110);
+  },
+  rogueWarn() {
+    [0, 0.26, 0.52].forEach((d) => tone(330, 0.16, 'square', 0.05, 250, d));
+  },
+  rogueRumble() {
+    tone(70, 1.4, 'sawtooth', 0.12, 40);
+    tone(110, 1.2, 'triangle', 0.1, 55, 0.1);
+  },
   swallow(n) {
     const f = 180 * Math.pow(1.06, Math.min(n, 30));
     tone(f * 2, 0.18, 'sine', 0.12, f);
-  },
-  shake() {
-    tone(90, 0.3, 'triangle', 0.16, 60);
   },
   gameOver() {
     tone(300, 0.5, 'sawtooth', 0.08, 80);

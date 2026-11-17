@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { TEX_SCALE, defOf, surfaceKey, partKey, partInfo } from './art.js';
+import { TEX_SCALE, defOf, surfaceKey, lightKey, partKey, partInfo, hasKindTextures, makeKindTextures } from './art.js';
 
 // A planet is a soft body in two senses:
 //  - physics: a hard core (CORE of the radius) wrapped in a springy skin, so planets
@@ -37,6 +37,8 @@ function table(K) {
 
 export class Planet {
   constructor(scene, kind, x, y) {
+    // big bodies are textured in the background after start-up; make them now if they are needed sooner
+    if (!hasKindTextures(scene, kind)) makeKindTextures(scene, kind);
     this.scene = scene;
     this.id = nextId++;
     this.kind = kind;
@@ -82,7 +84,8 @@ export class Planet {
     this.captured = 0;
 
     this.frame = scene.textures.getFrame(surfaceKey(kind));
-    this.lightFrame = this.def.light ? scene.textures.getFrame('light_' + this.def.light) : null;
+    this.lightFrame = this.def.light ? scene.textures.getFrame(lightKey(kind)) : null;
+    this.tint = 0xffffff; // multiplies the surface colour, e.g. when a planet heats up
     this.parts = this.def.parts.map(([name, front], i) => {
       const info = partInfo(name);
       const img = scene.add.image(0, 0, partKey(kind, i));
