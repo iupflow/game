@@ -18,6 +18,10 @@ import {
 import { Planet, CORE, DRAG } from './Planet.js';
 import { PlanetBatch } from './PlanetBatch.js';
 import { nativeReady } from './native.js';
+import { SpecialsMixin, GOLDEN_POINTS, GOLDEN_COINS } from './features/specials.js';
+import { AbilitiesMixin, ABILITIES } from './features/abilities.js';
+import { EventsMixin } from './features/events.js';
+import { MenuMixin } from './features/menu.js';
 
 export const W = 720;
 export const H = 1280;
@@ -156,12 +160,38 @@ export class GameScene extends Phaser.Scene {
     super('game');
   }
 
-  create() {
+  /** data.play: start a game straight away (in data.mode, 'normal' or 'daily'); otherwise the home screen. */
+  create(data = {}) {
     this.CX = CX;
     this.CY = CY;
+    this.W = W;
+    this.H = H;
     this.cameras.main.setZoom(TEX_SCALE).centerOn(W / 2, H / 2);
     makeCommonTextures(this);
     for (const kind of FIRST_KINDS) makeKindTextures(this, kind);
+
+    // special planets, planet powers, cosmic events, stardust, the daily challenge
+    this.specialQueue = [];
+    this.storms = [];
+    this.sweeps = [];
+    this.runCoins = 0; // stardust picked up in this game
+    this.runCoinsBanked = 0;
+    this.coinsBanked = 0; // stardust from this game already in the wallet (a revive can end a game twice)
+    this.playMs = 0;
+    this.event = null;
+    this.portals = null;
+    this.goldComet = null;
+    this.rng = Math.random; // the launcher's dice; seeded in the daily challenge
+    this.rule = null; // the daily challenge's twist
+    this.mode = 'normal';
+    this.daily = null;
+    this.gravityMul = 1;
+    this.spinMul = 1;
+    this.lastWasSpecial = false;
+    this.nextGolden = false;
+    this.gameUi = []; // controls hidden on the home screen
+    this.homeItems = null;
+    this.applyLooks();
 
     this.pieces = [];
     this.dying = [];
@@ -239,6 +269,8 @@ export class GameScene extends Phaser.Scene {
     this.aimGfx = this.add.graphics().setDepth(36);
     this.dangerGfx = this.add.graphics().setDepth(37);
     this.beamGfx = this.add.graphics().setDepth(FX + 2).setBlendMode(Phaser.BlendModes.ADD);
+    this.abilityGfx = this.add.graphics().setDepth(33).setBlendMode(Phaser.BlendModes.ADD);
+    this.eventGfx = this.add.graphics().setDepth(16);
     this.buildField();
     this.buildHud();
     this.buildBottomBar();
@@ -255,8 +287,8 @@ export class GameScene extends Phaser.Scene {
     this.targetHint = this.text(W / 2, HINT_Y, '', 26, '#ff9ae6').setOrigin(0.5).setVisible(false);
     this.dangerLabel = this.text(0, 0, '', 34, '#ffffff').setOrigin(0.5).setDepth(38).setStroke('#7a0f2a', 7).setVisible(false);
 
-    this.nextKind = this.rollTier();
-    this.prepareHeld();
+    if (data.play) this.startGame(data.mode || 'normal');
+    else this.showHome();
 
     // the bigger bodies are textured one per frame after start-up, so the game appears at once
     this.textureQueue = ALL_KINDS.filter((k) => !hasKindTextures(this, k));
@@ -275,6 +307,7 @@ export class GameScene extends Phaser.Scene {
     // Tap: the planet is let go from the orbit at the angle you tapped, and gravity pulls it in.
     // Pull: press anywhere and drag; the drag's direction picks the side, its length the power.
     this.input.on('pointerdown', (p, over) => {
+      if ((this.state === 'aim' || this.state === 'flying') && this.tryCatchComet(p)) return;
       if (this.targeting) {
         if (!over.length) this.pickTarget(p);
         return;
@@ -412,21 +445,35 @@ export class GameScene extends Phaser.Scene {
 
   // ---------- setup ----------
 
+  /** The sky in the chosen theme. Drawn again when the theme changes. */
   drawBackground() {
-    const g = this.add.graphics();
-    g.fillGradientStyle(0x221a5a, 0x221a5a, 0x0c0a26, 0x0c0a26, 1);
-    g.fillRect(-W, -H, W * 3, H * 3);
-    for (const [x, y, s, tint] of [[150, 380, 5.2, 0x6a45d8], [600, 900, 6, 0x3a6fd8], [520, 300, 3.6, 0xc05aa8]]) {
-      this.add.image(x, y, 'soft').setScale(s / TEX_SCALE).setTint(tint).setAlpha(0.22).setBlendMode(Phaser.BlendModes.ADD);
+    if (this.bgLayer) {
+      this.tweens.killTweensOf(this.bgLayer.list);
+      this.bgLayer.destroy(true);
     }
+    const t = this.theme;
+    this.bgLayer = this.add.container(0, 0).setDepth(-10);
+    const g = this.add.graphics();
+    g.fillGradientStyle(t.top, t.top, t.bottom, t.bottom, 1);
+    g.fillRect(-W, -H, W * 3, H * 3);
+    this.bgLayer.add(g);
+    [[150, 380, 5.2], [600, 900, 6], [520, 300, 3.6]].forEach(([x, y, s], i) => {
+      this.bgLayer.add(this.add.image(x, y, 'soft').setScale(s / TEX_SCALE).setTint(t.glows[i]).setAlpha(0.22).setBlendMode(Phaser.BlendModes.ADD));
+    });
     for (let i = 0; i < 110; i++) {
       g.fillStyle(0xffffff, 0.25 + Math.random() * 0.6);
       g.fillCircle(Math.random() * W, Math.random() * H, 0.6 + Math.random() * 1.5);
     }
     for (let i = 0; i < 9; i++) {
       const s = this.add.image(Math.random() * W, 200 + Math.random() * 900, 'spark').setScale(0.35 / TEX_SCALE).setAlpha(0.2);
+      this.bgLayer.add(s);
       this.tweens.add({ targets: s, alpha: 0.9, duration: 900 + Math.random() * 1500, yoyo: true, repeat: -1, delay: Math.random() * 2000 });
     }
+  }
+
+  /** The smallest body the launcher gives at the moment. */
+  launchLow() {
+    return launchRange(this.runMax)[0];
   }
 
   buildField() {
@@ -573,21 +620,24 @@ export class GameScene extends Phaser.Scene {
   }
 
   buildHud() {
-    this.text(40, 36, 'SCORE', 20, '#b9a8e6');
+    const ui = this.gameUi;
+    ui.push(this.text(40, 36, 'SCORE', 20, '#b9a8e6'));
     this.scoreText = this.text(40, 56, '0', 58);
     this.bestText = this.text(40, 122, 'BEST ' + this.best, 20, '#b9a8e6');
     this.universeText = this.text(40, 148, '', 20, '#ffd93d');
+    ui.push(this.scoreText, this.bestText, this.universeText);
 
     // next planet; tap to swap
-    this.text(W - 40, 36, 'NEXT', 20, '#b9a8e6').setOrigin(1, 0);
+    ui.push(this.text(W - 40, 36, 'NEXT', 20, '#b9a8e6').setOrigin(1, 0));
     const nx = W - 92;
     const ny = 104;
     const zone = this.add.circle(nx, ny, 46, 0xffffff, 0.08).setDepth(UI);
     this.tappable(zone, () => this.swap(), 1);
     this.nextIcon = this.portrait(nx, ny, 0, 28).setDepth(UI);
-    this.text(nx, 153, 'tap to swap', 14, '#8f7fc2').setOrigin(0.5, 0);
+    ui.push(zone, this.nextIcon, this.text(nx, 153, 'tap to swap', 14, '#8f7fc2').setOrigin(0.5, 0));
 
     this.comboText = this.text(W / 2, 232, '', 40, '#ffd93d').setOrigin(0.5).setAlpha(0).setDepth(FX + 2);
+    this.buildCoins();
   }
 
   boosterButton(x, y, iconKey, iconScale, label, onTap) {
@@ -669,6 +719,8 @@ export class GameScene extends Phaser.Scene {
     const zone = this.add.zone(W / 2, this.stripY, W - 40, 56);
     this.tappable(zone, () => this.openAlbum(), 1);
     this.strip = TIERS.map(() => this.add.image(0, this.stripY, 'dot').setDepth(UI).setVisible(false));
+    this.gameUi.push(...Object.values(this.btn), this.stripPanel, zone);
+    this.gameUiOn = true;
     this.refreshStrip();
   }
 
@@ -679,6 +731,10 @@ export class GameScene extends Phaser.Scene {
 
   refreshStrip() {
     if (!this.strip) return;
+    if (!this.gameUiOn) {
+      for (const img of this.strip) img.setVisible(false);
+      return;
+    }
     const found = this.found().filter((i) => hasKindTextures(this, i));
     const n = found.length;
     const cell = Math.min(52, 600 / Math.max(1, n - 1));
@@ -701,7 +757,7 @@ export class GameScene extends Phaser.Scene {
     const [lo, hi] = launchRange(this.runMax);
     let total = 0;
     for (let t = lo; t <= hi; t++) total += SPAWN_WEIGHTS[t - lo];
-    let n = Math.random() * total;
+    let n = this.rng() * total;
     for (let t = lo; t <= hi; t++) {
       n -= SPAWN_WEIGHTS[t - lo];
       if (n < 0) return t;
@@ -709,31 +765,40 @@ export class GameScene extends Phaser.Scene {
     return lo;
   }
 
-  setHeld(kind) {
+  setHeld(kind, golden = false) {
     if (this.held) this.held.destroy();
     this.held = new Planet(this, kind, CX, CY);
+    this.dress(this.held);
+    if (golden) this.held.makeGolden();
     this.updateHeld();
   }
 
   prepareHeld() {
-    this.setHeld(this.nextKind);
-    this.nextKind = this.rollTier();
+    this.setHeld(this.nextKind, this.nextGolden);
+    const next = this.rollNext();
+    this.nextKind = next.kind;
+    this.nextGolden = next.golden;
     this.refreshNext();
+    this.tipSpecial(this.nextKind, this.nextGolden);
     this.state = 'aim';
   }
 
   refreshNext() {
     this.nextIcon.setTexture(portraitKey(this.nextKind));
+    if (this.nextGolden) this.nextIcon.setTint(0xffdf7a);
+    else this.nextIcon.clearTint();
     this.tweens.add({ targets: this.nextIcon, scale: { from: 0.2 / TEX_SCALE, to: 28 / PORTRAIT_R / TEX_SCALE }, duration: 180, ease: 'Back.out' });
   }
 
   swap() {
-    if (this.state !== 'aim' || !this.held || this.held.tier < 0 || this.aiming) return;
+    if (this.state !== 'aim' || !this.held || this.aiming) return;
     Sfx.swap();
     Haptics.light();
     const current = this.held.kind;
-    this.setHeld(this.nextKind);
+    const golden = !!this.held.golden;
+    this.setHeld(this.nextKind, this.nextGolden);
     this.nextKind = current;
+    this.nextGolden = golden;
     this.refreshNext();
   }
 
@@ -1694,7 +1759,7 @@ export class GameScene extends Phaser.Scene {
     const list = this.pieces;
     const crunch = this.state === 'crunch';
     const scattering = now < this.scatterUntil;
-    const g = GRAVITY * (crunch ? 2.6 : scattering ? 0.7 : now < this.gravBoostUntil ? 2 : 1);
+    const g = GRAVITY * this.gravityMul * (crunch ? 2.6 : scattering ? 0.7 : now < this.gravBoostUntil ? 2 : 1);
     const swirl = crunch ? 0.45 : 0;
     const damping = scattering ? BOUNCY_DAMPING : SKIN_DAMPING;
     const restitution = scattering ? BOUNCY_RESTITUTION : 0.12;
@@ -1767,7 +1832,10 @@ export class GameScene extends Phaser.Scene {
 
     if (this.wrecker) this.stepWrecker(now);
     this.stepFusion(now);
-    this.stepVortex(now); // may swallow planets, so the count is taken only after this
+    this.stepVortex(now); // may swallow planets, so the count is taken only after these
+    this.stepStorms(now);
+    this.stepSweeps(now);
+    this.stepWormholes(now);
 
     const n = list.length;
     const previous = this.contacts;
@@ -1817,6 +1885,8 @@ export class GameScene extends Phaser.Scene {
         if (A.tier >= 0 && A.tier === B.tier && overlap > 1.5 && !A.merging && !B.merging) {
           A.merging = B.merging = true;
           this.mergeQueue.push([A, B]);
+        } else if (A.tier < 0 || B.tier < 0) {
+          this.specialContact(A, B);
         }
       }
     }
@@ -1880,6 +1950,7 @@ export class GameScene extends Phaser.Scene {
 
   spawnPiece(x, y, tier) {
     const b = new Planet(this, tier, x, y);
+    this.dress(b);
     b.addBody();
     b.pop = 0.5;
     b.pv = 0.16;
@@ -1890,6 +1961,7 @@ export class GameScene extends Phaser.Scene {
       if (this.ringTarget() > before + 0.5) this.ringGrowFx();
     }
     this.discover(tier);
+    this.checkDailyGoal(tier);
     return b;
   }
 
@@ -1916,7 +1988,8 @@ export class GameScene extends Phaser.Scene {
       this.startCrunch(x, y);
       return { shown: MAX_PLANET, points: base * 5 };
     }
-    this.spawnPiece(x, y, next);
+    const p = this.spawnPiece(x, y, next);
+    this.triggerAbility(p);
     return { shown: next, points: base };
   }
 
@@ -1929,12 +2002,18 @@ export class GameScene extends Phaser.Scene {
       const y = (a.y + b.y) / 2;
       const tier = a.tier;
       const pair = [a, b].map((p) => ({ x: p.x, y: p.y, rv: p.rv, kind: p.kind }));
+      const golden = a.golden || b.golden;
       this.removePiece(a);
       this.removePiece(b);
       this.combo = now - this.lastMergeAt < 1300 ? this.combo + 1 : 1;
       this.lastMergeAt = now;
       const { shown, points } = this.evolve(x, y, tier);
-      const total = points * this.combo * this.universe;
+      let total = points * this.combo * this.universe;
+      if (golden) {
+        // a golden planet pays triple, and some stardust
+        total *= GOLDEN_POINTS;
+        this.gainCoins(GOLDEN_COINS, x, y);
+      }
       this.addScore(total);
       this.mergeFx(x, y, shown, total, pair);
       this.shockwave(x, y, TIERS[shown].r + 70, 1.8 + shown * 0.2);
@@ -1942,6 +2021,7 @@ export class GameScene extends Phaser.Scene {
       Haptics.merge(tier + 1);
       if (tier >= 2) this.slowUntil = now + 60 + tier * 7;
     }
+    this.processSpecials(now);
   }
 
   addScore(points) {
@@ -2210,7 +2290,9 @@ export class GameScene extends Phaser.Scene {
   showDiscovery(tier) {
     Sfx.discover(tier);
     Haptics.success();
-    this.banner('NEW DISCOVERY', TIERS[tier].name, '#ffd93d', tier);
+    const power = ABILITIES[tier];
+    this.banner('NEW DISCOVERY', power ? `${TIERS[tier].name}: ${power.text.toLowerCase()}` : TIERS[tier].name, '#ffd93d', tier);
+    this.refreshGoal();
     for (let i = 0; i < 22; i++) {
       const d = this.add
         .image(W / 2, 270, 'spark')
@@ -2239,7 +2321,7 @@ export class GameScene extends Phaser.Scene {
     const crunch = this.state === 'crunch';
     let rate = 0;
     if (crunch || this.state === 'aim' || this.state === 'flying') {
-      this.worldRot += ((WORLD_SPIN * Math.min(delta, 50)) / 1000) * (crunch ? 5 : 1);
+      this.worldRot += ((WORLD_SPIN * this.spinMul * Math.min(delta, 50)) / 1000) * (crunch ? 5 : 1);
       // time slows right down while a target is being picked, and briefly on big merges
       rate = this.targeting ? 0.15 : now < this.slowUntil ? 0.3 : 1;
       this.acc += Math.min(delta, 50) * rate;
@@ -2255,6 +2337,8 @@ export class GameScene extends Phaser.Scene {
       if (this.state === 'crunch') this.updateCrunch(now);
       else {
         // the countdown runs on game time, so it slows down with everything else
+        this.stepBombs(now);
+        this.updateEvents(now, Math.min(delta, 50) * rate);
         this.checkPieces(now, Math.min(delta, 50) * rate);
         if (this.state === 'flying' && now >= this.nextHeldAt) this.prepareHeld();
       }
@@ -2272,6 +2356,8 @@ export class GameScene extends Phaser.Scene {
     this.drawAim(now);
     this.drawFusion(now);
     this.drawVortex(now);
+    this.drawAbilities(now);
+    this.drawEvents(now);
     this.drawDanger(now);
     this.drawBeam(now);
   }
@@ -2486,6 +2572,8 @@ export class GameScene extends Phaser.Scene {
   }
 
   showGameOver() {
+    const earned = this.bankCoins();
+    this.saveDailyBest();
     const items = this.panel(70, 250, W - 140, 800);
     const add = (o) => {
       items.push(o.setDepth(OVERLAY));
@@ -2502,6 +2590,8 @@ export class GameScene extends Phaser.Scene {
     add(this.text(W / 2 - 80, 536, 'BIGGEST', 18, '#b9a8e6'));
     add(this.text(W / 2 - 80, 558, TIERS[this.biggest].name, 32));
     add(this.text(W / 2 - 80, 598, `${this.seen.length} discovered`, 18, '#b9a8e6'));
+    add(this.add.image(W / 2 - 92, 656, 'coin').setScale(0.8 / TEX_SCALE));
+    add(this.text(W / 2 - 70, 656, `+${earned} stardust`, 26, '#ffe08a').setOrigin(0, 0.5));
 
     let y = 720;
     if (!this.revived) {
@@ -2525,10 +2615,18 @@ export class GameScene extends Phaser.Scene {
       if (this.state !== 'over') return;
       this.state = 'busy';
       await Ads.betweenGames();
-      this.scene.restart();
+      this.scene.restart({ play: true, mode: this.mode });
     });
     items.push(again);
-    y += 104;
+    y += 100;
+    const home = this.button(W / 2, y, 440, 64, 'HOME', 0x3b5bdb, async () => {
+      if (this.state !== 'over') return;
+      this.state = 'busy';
+      await Ads.betweenGames();
+      this.scene.restart({});
+    }, 24);
+    items.push(home);
+    y += 80;
     const testBuild = typeof window !== 'undefined' && window.__TEST_PURCHASE;
     const owned = this.premium ? (testBuild ? 'Premium ✓  (test: tap to undo)' : 'Premium ✓') : 'No Ads + Max Boosters  $2.99';
     const premium = this.button(W / 2, y, 440, 64, owned, 0x6741d9, async () => {
@@ -2607,7 +2705,7 @@ export class GameScene extends Phaser.Scene {
   // ---------- album ----------
 
   openAlbum() {
-    if (this.state !== 'aim' && this.state !== 'flying') return;
+    if (this.state !== 'aim' && this.state !== 'flying' && this.state !== 'menu') return;
     const before = this.state;
     const pausedAt = this.time.now;
     this.state = 'paused';
@@ -2663,3 +2761,5 @@ export class GameScene extends Phaser.Scene {
     items.push(close);
   }
 }
+
+Object.assign(GameScene.prototype, SpecialsMixin, AbilitiesMixin, EventsMixin, MenuMixin);

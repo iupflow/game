@@ -399,6 +399,68 @@ export const Sfx = {
     [0, 4, 7].forEach((s, i) => tone({ f: note(7 + s), dur: 0.8, gain: 0.035, type: 'triangle', attack: 0.08, delay: 0.1 + i * 0.07, wet: 0.6 }));
   },
 
+  /** A rainbow star melts into a planet: a sweep of bright notes up the scale. */
+  rainbow() {
+    [0, 2, 4, 5, 7, 9].forEach((s, i) => bell({ f: note(12 + s), dur: 0.5, gain: 0.05, delay: i * 0.045, wet: 0.5 }));
+    noise({ dur: 0.4, gain: 0.04, type: 'highpass', f: 5000, attack: 0.05, wet: 0.6 });
+  },
+
+  /** A star bomb goes off. */
+  bomb() {
+    boom(0.3);
+    crunch({ dur: 0.25, gain: 0.09, f: 1200, delay: 0.02 });
+  },
+
+  /** Saturn's rings catch some moons: little chimes, one per moon. */
+  ringCatch(n) {
+    bell({ f: note(14), dur: 0.8, gain: 0.06, ratio: 2.4, wet: 0.5 });
+    for (let i = 0; i < n; i++) bell({ f: note(17 + i * 2), dur: 0.5, gain: 0.05, delay: 0.2 + i * 0.12, wet: 0.5 });
+  },
+
+  /** Jupiter's storm starts to turn. */
+  storm() {
+    wind({ dur: 2.2, gain: 0.08, f: 500, drift: 350, rate: 2.5, q: 4, attack: 0.3 });
+  },
+
+  /** The Sun flares. */
+  flare() {
+    noise({ dur: 0.7, gain: 0.1, type: 'bandpass', f: 400, f2: 2600, q: 0.9, attack: 0.04, wet: 0.4 });
+  },
+
+  /** A supernova's shockwave. */
+  shock() {
+    boom(0.28);
+    noise({ dur: 0.9, gain: 0.06, type: 'highpass', f: 1500, f2: 6000, attack: 0.03, wet: 0.6 });
+  },
+
+  /** A pulsar's beams start to sweep. */
+  sweep() {
+    pulses({ n: 6, f: 1500, gap: 0.07, gain: 0.05 });
+    tone({ f: 300, f2: 900, dur: 0.6, gain: 0.04, type: 'sawtooth', wet: 0.3, filter: { type: 'lowpass', f: 2200 } });
+  },
+
+  /** Stardust picked up. */
+  coin() {
+    tone({ f: note(19), dur: 0.08, gain: 0.06, type: 'triangle', wet: 0.2 });
+    tone({ f: note(23), dur: 0.16, gain: 0.06, type: 'triangle', delay: 0.07, wet: 0.3 });
+  },
+
+  /** A cosmic event begins. */
+  event() {
+    [0, 4, 7, 12].forEach((s, i) => tone({ f: note(10 + s), dur: 0.5, gain: 0.04, type: 'triangle', attack: 0.04, delay: i * 0.08, wet: 0.6 }));
+  },
+
+  /** A planet passes through a wormhole. */
+  warp() {
+    tone({ f: 900, f2: 200, dur: 0.25, gain: 0.05, type: 'sine', wet: 0.5 });
+    tone({ f: 200, f2: 900, dur: 0.25, gain: 0.04, type: 'sine', delay: 0.12, wet: 0.5 });
+  },
+
+  /** A meteor streaks in. */
+  meteor() {
+    noise({ dur: 0.35, gain: 0.04, type: 'bandpass', f: 3000, f2: 600, q: 1.5, wet: 0.3 });
+  },
+
   /** A booster becomes available for the first time. */
   unlock() {
     [0, 2, 4, 5, 7].forEach((s, i) => bell({ f: note(15 + s), dur: 0.6, gain: 0.05, delay: i * 0.06 }));

@@ -433,6 +433,43 @@ const SURFACES = {
     };
   },
 
+  // A wildcard: pearly, swirling bands of every colour
+  rainbow() {
+    const n = makeNoise(151);
+    const m = makeNoise(152);
+    return (P, mu, out) => {
+      const lon = Math.atan2(P[2], P[0]) / TAU;
+      const swirl = fbm(n, P[0] * 1.6, P[1] * 1.6, P[2] * 1.6, 3);
+      const h = (((lon + P[1] * 0.35 + swirl * 0.45) % 1) + 1) % 1;
+      // hue to a soft, pastel rainbow
+      const k = (o) => {
+        const t = (h * 6 + o) % 6;
+        return Math.max(0, Math.min(1, Math.abs(t - 3) - 1));
+      };
+      out[0] = 150 + 105 * k(0);
+      out[1] = 150 + 105 * k(4);
+      out[2] = 150 + 105 * k(2);
+      // pearly streaks
+      mixTo(out, [255, 255, 255], smooth(0.35, 0.75, fbm(m, P[0] * 3, P[1] * 3, P[2] * 3, 2)) * 0.45);
+    };
+  },
+
+  // A star bomb: dark rock split by glowing cracks
+  bomb() {
+    const n = makeNoise(161);
+    const m = makeNoise(162);
+    const col = ramp([[-0.6, 0x2a2026], [0, 0x3d3036], [0.6, 0x5a4850]]);
+    const HOT = rgb(0xff7a2e);
+    const CORE = rgb(0xffe08a);
+    return (P, mu, out) => {
+      col(fbm(m, P[0] * 2.5, P[1] * 2.5, P[2] * 2.5, 3) * 1.3, out);
+      const c = Math.abs(fbm(n, P[0] * 2.2, P[1] * 2.2, P[2] * 2.2, 3));
+      const crack = 1 - smooth(0.02, 0.09, c);
+      mixTo(out, HOT, crack);
+      mixTo(out, CORE, (1 - smooth(0.0, 0.03, c)) * 0.8);
+    };
+  },
+
   // Dark matter: a dense, deep-black stone that looks impossible to break.
   // Chunky grain in a few close shades of near-black, with faint cold flecks.
   dark() {
@@ -843,6 +880,45 @@ const PARTS = {
       }
     },
   },
+  rainbowGlow: {
+    size: 1.7,
+    blend: 'add',
+    spin: 'slow',
+    draw(ctx, R) {
+      glow(ctx, R, 1.7, [[0, 'rgba(255,255,255,.55)'], [0.4, 'rgba(220,200,255,.22)'], [1, 'rgba(200,160,255,0)']]);
+      // a halo of every colour
+      for (let i = 0; i < 36; i++) {
+        const a = (i / 36) * TAU;
+        ctx.beginPath();
+        ctx.arc(0, 0, R * 1.22, a, a + TAU / 36 + 0.02);
+        ctx.strokeStyle = `hsla(${(i / 36) * 360}, 90%, 70%, .5)`;
+        ctx.lineWidth = R * 0.12;
+        ctx.stroke();
+      }
+    },
+  },
+  bombGlow: {
+    size: 1.8,
+    blend: 'add',
+    draw(ctx, R) {
+      glow(ctx, R, 1.8, [[0, 'rgba(255,170,80,.75)'], [0.35, 'rgba(255,110,40,.28)'], [1, 'rgba(255,80,20,0)']]);
+      // a burning fuse on top
+      ctx.strokeStyle = 'rgba(255,220,150,.9)';
+      ctx.lineWidth = R * 0.08;
+      ctx.beginPath();
+      ctx.moveTo(0, -R * 0.95);
+      ctx.quadraticCurveTo(R * 0.25, -R * 1.25, R * 0.12, -R * 1.45);
+      ctx.stroke();
+      const s = ctx.createRadialGradient(R * 0.12, -R * 1.45, 0, R * 0.12, -R * 1.45, R * 0.32);
+      s.addColorStop(0, 'rgba(255,255,220,1)');
+      s.addColorStop(0.4, 'rgba(255,200,90,.8)');
+      s.addColorStop(1, 'rgba(255,120,30,0)');
+      ctx.fillStyle = s;
+      ctx.beginPath();
+      ctx.arc(R * 0.12, -R * 1.45, R * 0.32, 0, TAU);
+      ctx.fill();
+    },
+  },
   darkTrail: {
     size: 3.6,
     spin: 'velocity',
@@ -889,6 +965,10 @@ export const TIERS = [
 
 export const SPECIALS = {
   comet: { name: 'Comet', r: 24, color: 0xc6e2ff, surface: 'comet', light: { rim: 0xe6fcff, rimK: 0.7, sheen: 0.14, gloss: 0.45 }, parts: [['coma', false], ['cometTail', false]] },
+  // launched now and then: merges with whatever it touches first, lifting it one step
+  rainbow: { name: 'Rainbow Star', r: 24, color: 0xf2c9ff, surface: 'rainbow', light: { rim: 0xffffff, rimK: 0.6, sheen: 0.18, gloss: 0.5 }, parts: [['rainbowGlow', false]] },
+  // launched now and then: blows the small planets around it away
+  bomb: { name: 'Star Bomb', r: 26, color: 0xff7a2e, surface: 'bomb', light: { rim: 0xffb27a, rimK: 0.5, sheen: 0.08, gloss: 0.4 }, parts: [['bombGlow', false]] },
   // a dense ball of dark matter: deep black, a cold violet edge, a hard polished glint
   wrecker: { name: 'Dark Matter', r: 72, color: 0x2a2440, surface: 'dark', light: { rim: 0x9a88ff, rimK: 0.55, sheen: 0.05, gloss: 0.55 }, parts: [['darkTrail', false], ['darkHalo', false], ['darkSpark', false]] },
 };
@@ -978,6 +1058,8 @@ const FRAMES = {
   blackhole: [0, 0, 0],
   comet: [0.3, 0.4, 0.6],
   dark: [0.3, 0.3, 0.2],
+  rainbow: [0.4, 0.3, 0.5],
+  bomb: [0.3, -0.2, 0.4],
 };
 
 const surfaceCanvases = new Map();
@@ -1047,7 +1129,7 @@ export const surfaceKey = (kind) => `surface_${kind}`;
 export const lightKey = (kind) => `light_${kind}`;
 export const partKey = (kind, i) => `part_${kind}_${i}`;
 export const portraitKey = (kind) => `portrait_${kind}`;
-export const ALL_KINDS = [...TIERS.keys(), 'comet', 'wrecker'];
+export const ALL_KINDS = [...TIERS.keys(), 'comet', 'wrecker', 'rainbow', 'bomb'];
 
 /** Everything one body needs: surface, lighting, parts and its portrait. */
 export function makeKindTextures(scene, kind) {
@@ -1176,4 +1258,109 @@ export function makeCommonTextures(scene) {
       ctx.stroke();
     }
   });
+
+  // a golden planet's shine: a warm rim and a few twinkles, drawn over it (at radius FACE_R)
+  canvasTex(scene, 'goldShine', FACE_R * 3, FACE_R * 3, (ctx) => {
+    const R = FACE_R;
+    const g = ctx.createRadialGradient(0, 0, R * 0.8, 0, 0, R * 1.45);
+    g.addColorStop(0, 'rgba(255,214,90,0)');
+    g.addColorStop(0.35, 'rgba(255,214,90,.55)');
+    g.addColorStop(1, 'rgba(255,190,60,0)');
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.arc(0, 0, R * 1.45, 0, TAU);
+    ctx.fill();
+    const rnd = seeded(31);
+    for (let i = 0; i < 6; i++) {
+      const a = (i / 6) * TAU + rnd() * 0.5;
+      const d = R * (0.55 + rnd() * 0.6);
+      star4(ctx, Math.cos(a) * d, Math.sin(a) * d, R * (0.12 + rnd() * 0.1), '#fff6c8');
+    }
+  });
+
+  // cute faces for the face skin, at radius FACE_R: happy, blinking, surprised
+  for (const mood of ['happy', 'blink', 'wow']) {
+    canvasTex(scene, `face_${mood}`, FACE_R * 2, FACE_R * 2, (ctx) => drawFace(ctx, FACE_R, mood));
+  }
+
+  // stardust, the coin of the game
+  canvasTex(scene, 'coin', 40, 40, (ctx) => {
+    const g = ctx.createLinearGradient(-14, -14, 14, 14);
+    g.addColorStop(0, '#fff3b0');
+    g.addColorStop(0.5, '#ffc93d');
+    g.addColorStop(1, '#e08a12');
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.arc(0, 0, 16, 0, TAU);
+    ctx.fill();
+    ctx.lineWidth = 2.5;
+    ctx.strokeStyle = '#b8650a';
+    ctx.stroke();
+    star4(ctx, 0, 0, 10, '#fffdf0');
+  });
+}
+
+/** Radius the face and gold-shine textures are drawn at; they are scaled to each planet. */
+export const FACE_R = 48;
+
+function star4(ctx, x, y, r, color) {
+  ctx.beginPath();
+  for (let i = 0; i < 8; i++) {
+    const rr = i % 2 ? r * 0.32 : r;
+    const a = -Math.PI / 2 + (i * Math.PI) / 4;
+    ctx.lineTo(x + Math.cos(a) * rr, y + Math.sin(a) * rr);
+  }
+  ctx.closePath();
+  ctx.fillStyle = color;
+  ctx.fill();
+}
+
+function drawFace(ctx, R, mood) {
+  // rosy cheeks
+  for (const s of [-1, 1]) {
+    const g = ctx.createRadialGradient(s * R * 0.52, R * 0.2, 0, s * R * 0.52, R * 0.2, R * 0.2);
+    g.addColorStop(0, 'rgba(255,120,150,.55)');
+    g.addColorStop(1, 'rgba(255,120,150,0)');
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.ellipse(s * R * 0.52, R * 0.2, R * 0.2, R * 0.13, 0, 0, TAU);
+    ctx.fill();
+  }
+  // eyes
+  for (const s of [-1, 1]) {
+    const ex = s * R * 0.3;
+    const ey = -R * 0.06;
+    if (mood === 'blink') {
+      ctx.strokeStyle = '#2b1d3a';
+      ctx.lineWidth = R * 0.07;
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.arc(ex, ey - R * 0.02, R * 0.1, 0.15 * Math.PI, 0.85 * Math.PI);
+      ctx.stroke();
+      continue;
+    }
+    const big = mood === 'wow' ? 1.25 : 1;
+    ctx.fillStyle = '#2b1d3a';
+    ctx.beginPath();
+    ctx.ellipse(ex, ey, R * 0.1 * big, R * 0.13 * big, 0, 0, TAU);
+    ctx.fill();
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath();
+    ctx.arc(ex - R * 0.035, ey - R * 0.05, R * 0.04 * big, 0, TAU);
+    ctx.fill();
+  }
+  // mouth
+  ctx.strokeStyle = '#2b1d3a';
+  ctx.fillStyle = '#2b1d3a';
+  ctx.lineWidth = R * 0.06;
+  ctx.lineCap = 'round';
+  if (mood === 'wow') {
+    ctx.beginPath();
+    ctx.ellipse(0, R * 0.25, R * 0.08, R * 0.1, 0, 0, TAU);
+    ctx.fill();
+  } else {
+    ctx.beginPath();
+    ctx.arc(0, R * 0.14, R * 0.13, 0.2 * Math.PI, 0.8 * Math.PI);
+    ctx.stroke();
+  }
 }

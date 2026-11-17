@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { TEX_SCALE, defOf, surfaceKey, lightKey, partKey, partInfo, hasKindTextures, makeKindTextures } from './art.js';
+import { TEX_SCALE, FACE_R, defOf, surfaceKey, lightKey, partKey, partInfo, hasKindTextures, makeKindTextures } from './art.js';
 
 // A planet is a soft body in two senses:
 //  - physics: a hard core (CORE of the radius) wrapped in a springy skin, so planets
@@ -93,7 +93,36 @@ export class Planet {
       (front ? scene.frontLayer : scene.backLayer).add(img);
       return { img, spin: info.spin };
     });
+    this.overlays = []; // pictures drawn over the planet: a face, a golden shine
+    this.face = null;
+    this.blinkAt = scene.time.now + 1500 + Math.random() * 4000;
     this.place(scene.time.now);
+  }
+
+  /**
+   * An extra picture over the planet (drawn at radius FACE_R, scaled to it). upright: stays level on
+   * screen while the field turns; spin: turns on its own, in radians per millisecond.
+   */
+  addOverlay(key, { add = false, upright = true, spin = 0 } = {}) {
+    const img = this.scene.add.image(0, 0, key);
+    if (add) img.setBlendMode(Phaser.BlendModes.ADD);
+    this.scene.frontLayer.add(img);
+    const o = { img, key, upright, spin };
+    this.overlays.push(o);
+    this.place(this.scene.time.now);
+    return o;
+  }
+
+  /** A cute face that blinks now and then and looks surprised when squashed (the face skin). */
+  addFace() {
+    this.face = this.addOverlay('face_happy');
+  }
+
+  /** A golden planet: a warm tint and a twinkling shine. Merging it pays extra. */
+  makeGolden() {
+    this.golden = true;
+    this.tint = 0xffdf7a;
+    this.addOverlay('goldShine', { add: true, upright: false, spin: 0.0009 });
   }
 
   get rv() {
@@ -264,10 +293,34 @@ export class Planet {
       else if (spin === 'velocity') img.setRotation(this.tailAngle);
       else img.setRotation(this.rot);
     }
+    if (this.overlays.length) {
+      const so = this.rv / FACE_R / TEX_SCALE;
+      if (this.face) {
+        // the face follows the jelly inside, blinks, and is startled by a hard squash
+        let mood = 'happy';
+        if (Math.hypot(this.qx, this.qy) > 0.15) mood = 'wow';
+        else if (now > this.blinkAt) {
+          mood = 'blink';
+          if (now > this.blinkAt + 150) this.blinkAt = now + 2000 + Math.random() * 4500;
+        }
+        const key = `face_${mood}`;
+        if (this.face.key !== key) {
+          this.face.key = key;
+          this.face.img.setTexture(key);
+        }
+      }
+      for (const o of this.overlays) {
+        const wob = o === this.face ? 1 : 0;
+        o.img.setPosition(lx + this.sx * wob, ly + this.sy * wob).setScale(so).setAlpha(this.alpha);
+        if (o.spin) o.img.setRotation(now * o.spin);
+        else if (o.upright) o.img.setRotation(-this.scene.worldRot);
+      }
+    }
   }
 
   destroy() {
     for (const { img } of this.parts) img.destroy();
+    for (const { img } of this.overlays) img.destroy();
     this.removeBody();
   }
 }
