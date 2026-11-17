@@ -55,11 +55,18 @@ npm run build    # production build in dist/
   hits. It cannot upgrade the biggest planet on the field (it bounces off, and the aim
   line turns red beforehand), and each comet costs more charge than the last, so
   comets help smaller planets catch up but cannot carry one planet to a black hole
-- Orbital laser booster: pick any planet and a satellite vaporizes it
+- Laser booster: tap a planet, and a satellite vaporizes every planet of that kind, one
+  beam after another
+- Fusion booster: every matching pair lifts off, flies over the others to its partner and
+  merges; new pairs are looked for as it goes, so merges chain
+- Vortex booster: tap a spot and a small black hole opens there for a few seconds, pulling
+  everything nearby into a spin and swallowing the planets up to Earth size
 - Smash booster: a deep-black ball of dark matter crashes in like a billiards break shot.
   Every planet flies apart, bouncing off each other and off the screen edges, then gravity
   gathers them back into a new, random arrangement
 - One of each booster per game, more through rewarded ads
+- As bigger bodies appear (Sun, Red Giant, Supernova) the view pulls back, so the ring holds
+  more space and the late game does not run out of room
 - Buttons only react when the press starts on them, so a pull that ends over the bottom
   bar never triggers it
 - Swap: tap the NEXT planet to exchange it with the one waiting on the ring
@@ -67,9 +74,11 @@ npm run build    # production build in dist/
 
 ## Losing
 
-A planet resting clearly outside the dashed ring for 3 seconds ends the game. Each planet
-counts down on its own with a red ring, a number, a beep and a buzz every second, and the
-count winds back down if it gets back inside. The game-over screen names the planet.
+A planet resting clearly outside the dashed ring for 5 seconds ends the game. Only resting
+counts: while a planet is still moving its countdown waits, which leaves time to use a
+booster. Each planet counts down on its own with a red ring, a number, a beep and a buzz
+every second, and the count winds back down if it gets back inside. The game-over screen
+names the planet.
 
 ## Monetization flow
 

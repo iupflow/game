@@ -297,6 +297,21 @@ export const Sfx = {
     for (let i = 0; i < 8; i++) noise({ dur: 0.06, gain: 0.05, type: 'bandpass', f: 800 + Math.random() * 2500, q: 3, delay: 0.1 + Math.random() * 0.6, wet: 0.3 });
   },
 
+  fusion() {
+    tone({ f: 110, f2: 330, dur: 0.9, gain: 0.08, type: 'sawtooth', attack: 0.2, wet: 0.3, filter: { type: 'lowpass', f: 1400, q: 4 } });
+    [0, 2, 4, 7].forEach((s, i) => bell({ f: note(12 + s), dur: 0.8, gain: 0.05, delay: 0.15 + i * 0.07 }));
+  },
+
+  vortexOpen() {
+    noise({ dur: 1.1, gain: 0.12, type: 'bandpass', f: 2500, f2: 180, q: 2, attack: 0.05, wet: 0.5 });
+    tone({ f: 300, f2: 55, dur: 1, gain: 0.14, wet: 0.3 });
+  },
+
+  vortexClose() {
+    tone({ f: 70, f2: 420, dur: 0.25, gain: 0.12, wet: 0.3 });
+    noise({ dur: 0.3, gain: 0.08, type: 'highpass', f: 2500, wet: 0.4 });
+  },
+
   swallow(n) {
     const f = 700 * Math.pow(0.97, Math.min(n, 30));
     tone({ f, f2: f * 0.35, dur: 0.22, gain: 0.08, wet: 0.35 });

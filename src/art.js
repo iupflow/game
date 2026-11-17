@@ -1006,6 +1006,61 @@ export function makeCommonTextures(scene) {
     ctx.fillStyle = g;
     ctx.fillRect(-2.5, 14, 5, 26);
   });
+  // Fusion: two planets drawn together by glowing field lines
+  canvasTex(scene, 'icon_fusion', 80, 80, (ctx) => {
+    ctx.lineCap = 'round';
+    for (const [bend, alpha] of [[-17, 0.85], [17, 0.85], [-30, 0.4], [30, 0.4]]) {
+      ctx.beginPath();
+      ctx.moveTo(-15, 0);
+      ctx.quadraticCurveTo(0, bend, 15, 0);
+      ctx.strokeStyle = `rgba(150,235,255,${alpha})`;
+      ctx.lineWidth = 2.4;
+      ctx.stroke();
+    }
+    for (const [x, c1, c2] of [[-17, '#ffc6e8', '#ff79c6'], [17, '#c9f4ff', '#58c8ff']]) {
+      const g = ctx.createRadialGradient(x - 3, -4, 1, x, 0, 12);
+      g.addColorStop(0, c1);
+      g.addColorStop(1, c2);
+      ctx.beginPath();
+      ctx.arc(x, 0, 11, 0, TAU);
+      ctx.fillStyle = g;
+      ctx.fill();
+    }
+    ctx.shadowColor = '#ffffff';
+    ctx.shadowBlur = 8;
+    ctx.beginPath();
+    ctx.arc(0, 0, 4, 0, TAU);
+    ctx.fillStyle = '#ffffff';
+    ctx.fill();
+  });
+  // Vortex: a dark core with swirling arms
+  canvasTex(scene, 'icon_vortex', 80, 80, (ctx) => {
+    ctx.lineCap = 'round';
+    for (let arm = 0; arm < 3; arm++) {
+      ctx.save();
+      ctx.rotate((arm * TAU) / 3);
+      ctx.beginPath();
+      for (let t = 0; t <= 1.0001; t += 0.05) {
+        const a = t * 3.4;
+        const r = 7 + t * 21;
+        ctx.lineTo(Math.cos(a) * r, Math.sin(a) * r);
+      }
+      const g = ctx.createLinearGradient(0, 0, 28, 0);
+      g.addColorStop(0, '#f2e6ff');
+      g.addColorStop(1, 'rgba(150,110,255,0.2)');
+      ctx.strokeStyle = arm % 2 ? '#9f8cff' : '#d2b8ff';
+      ctx.lineWidth = 4;
+      ctx.stroke();
+      ctx.restore();
+    }
+    ctx.beginPath();
+    ctx.arc(0, 0, 8, 0, TAU);
+    ctx.fillStyle = '#07040f';
+    ctx.fill();
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = '#efe6ff';
+    ctx.stroke();
+  });
   canvasTex(scene, 'chevron', 60, 60, (ctx) => {
     ctx.strokeStyle = '#ff5a8a';
     ctx.lineWidth = 7;
