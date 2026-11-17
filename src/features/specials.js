@@ -1,13 +1,12 @@
-// Special planets from the launcher: the rainbow star, the star bomb and golden planets.
+// Special planets from the launcher: the star bomb and golden planets.
 // Mixed into GameScene, so `this` is the scene.
 import Phaser from 'phaser';
 import { Sfx } from '../sfx.js';
 import { Haptics } from '../haptics.js';
-import { TIERS, TEX_SCALE } from '../art.js';
+import { TEX_SCALE } from '../art.js';
 import { store } from '../ads.js';
 
 const SPECIAL_FROM = 4; // specials start once an Earth has been made in this game
-const RAINBOW_CHANCE = 0.035;
 const BOMB_CHANCE = 0.03;
 const GOLDEN_CHANCE = 0.06;
 const BOMB_FUSE_MS = 700; // from landing to the blast
@@ -16,23 +15,18 @@ export const GOLDEN_POINTS = 3; // a merge with a golden planet scores this many
 export const GOLDEN_COINS = 5;
 
 const TIPS = {
-  rainbow: ['RAINBOW STAR', 'Merges with any planet it touches'],
   bomb: ['STAR BOMB', 'Blows away the small planets around it'],
   golden: ['GOLDEN PLANET', 'Merge it for triple points and stardust'],
 };
 
 export const SpecialsMixin = {
-  /** What the launcher gives next: a body of the chain, sometimes golden, now and then a rainbow star or a star bomb. */
+  /** What the launcher gives next: a body of the chain, sometimes golden, now and then a star bomb. */
   rollNext() {
     const rule = this.rule || {};
     let kind = this.rollTier();
     let golden = false;
     if (this.runMax >= SPECIAL_FROM && !this.lastWasSpecial) {
-      const x = this.rng();
-      const pr = RAINBOW_CHANCE * (rule.rainbow || 1);
-      const pb = BOMB_CHANCE * (rule.bomb || 1);
-      if (x < pr) kind = 'rainbow';
-      else if (x < pr + pb) kind = 'bomb';
+      if (this.rng() < BOMB_CHANCE * (rule.bomb || 1)) kind = 'bomb';
       else if (this.rng() < GOLDEN_CHANCE * (rule.golden || 1)) golden = true;
     }
     this.lastWasSpecial = typeof kind !== 'number' || golden;
@@ -44,44 +38,12 @@ export const SpecialsMixin = {
     const id = golden ? 'golden' : typeof kind === 'number' ? null : kind;
     if (!id || !TIPS[id] || store.get(`jd3_tip_${id}`, false)) return;
     store.set(`jd3_tip_${id}`, true);
-    this.banner(TIPS[id][0], TIPS[id][1], id === 'golden' ? '#ffd93d' : id === 'bomb' ? '#ff9a5a' : '#e3b8ff', kind);
+    this.banner(TIPS[id][0], TIPS[id][1], id === 'golden' ? '#ffd93d' : '#ff9a5a', kind);
   },
 
-  /** Two planets touch and one of them is special. */
+  /** Two planets touch and one of them is special: a bomb arms on its first touch. */
   specialContact(A, B) {
-    for (const [s, o] of [[A, B], [B, A]]) {
-      if (s.kind === 'bomb' && !s.armedAt) s.armedAt = this.time.now;
-      if (s.kind === 'rainbow' && !s.used && o.tier >= 0 && !o.merging) {
-        // the rainbow star takes on the colours of the planet it touched and merges with it
-        s.used = true;
-        o.merging = true;
-        this.specialQueue.push([s, o]);
-      }
-    }
-  },
-
-  processSpecials(now) {
-    while (this.specialQueue.length) {
-      const [s, target] = this.specialQueue.shift();
-      if (!s.body || !target.body) continue;
-      const pair = [s, target].map((p) => ({ x: p.x, y: p.y, rv: p.rv, kind: p.kind }));
-      const { x, y, tier, golden } = target;
-      this.removePiece(s);
-      this.removePiece(target);
-      this.combo = now - this.lastMergeAt < 1300 ? this.combo + 1 : 1;
-      this.lastMergeAt = now;
-      const { shown, points } = this.evolve(x, y, tier);
-      let total = points * this.combo * this.universe;
-      if (golden) {
-        total *= GOLDEN_POINTS;
-        this.gainCoins(GOLDEN_COINS, x, y);
-      }
-      this.addScore(total);
-      this.mergeFx(x, y, shown, total, pair);
-      this.shockwave(x, y, TIERS[shown].r + 70, 1.8 + shown * 0.2);
-      Sfx.rainbow();
-      Haptics.merge(tier + 2);
-    }
+    for (const s of [A, B]) if (s.kind === 'bomb' && !s.armedAt) s.armedAt = this.time.now;
   },
 
   /** Bombs arm when they land (or after a long flight), flash faster and faster, then go off. */

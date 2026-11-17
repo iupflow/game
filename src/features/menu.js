@@ -3,7 +3,7 @@
 import { Sfx } from '../sfx.js';
 import { Haptics } from '../haptics.js';
 import { Meta } from '../meta.js';
-import { Ads } from '../ads.js';
+import { Ads, store } from '../ads.js';
 import { SKINS, THEMES, skinById, themeById, applyPageTheme } from '../themes.js';
 import { dailyChallenge, seededRandom } from '../daily.js';
 import { TIERS, HOLE, TEX_SCALE, FACE_R } from '../art.js';
@@ -17,10 +17,11 @@ export const MenuMixin = {
 
   buildCoins() {
     const W = this.W;
-    this.coinIcon = this.add.image(W / 2 - 46, 52, 'coin').setScale(0.95 / TEX_SCALE).setDepth(UI + 1);
-    this.coinText = this.text(W / 2 - 22, 52, '', 30, '#ffe08a').setOrigin(0, 0.5).setDepth(UI + 1);
-    this.goalText = this.text(W / 2, 96, '', 18, '#ffcf8a').setOrigin(0.5).setDepth(UI + 1).setVisible(false);
-    this.eventLabel = this.text(W / 2, 122, '', 18, '#ffffff').setOrigin(0.5).setDepth(UI + 1).setVisible(false);
+    // stardust: under the score; the daily goal and the current event: under the pause button
+    this.coinIcon = this.add.image(54, 165, 'coin').setScale(0.75 / TEX_SCALE).setDepth(UI + 1);
+    this.coinText = this.text(74, 165, '', 24, '#ffe08a').setOrigin(0, 0.5).setDepth(UI + 1);
+    this.goalText = this.text(W / 2, 112, '', 18, '#ffcf8a').setOrigin(0.5).setDepth(UI + 1).setVisible(false);
+    this.eventLabel = this.text(W / 2, 138, '', 18, '#ffffff').setOrigin(0.5).setDepth(UI + 1).setVisible(false);
     this.refreshCoins();
   },
 
@@ -29,7 +30,7 @@ export const MenuMixin = {
     this.coinText.setText((Meta.coins + this.runCoins - this.runCoinsBanked).toLocaleString('en-US'));
     if (pop) {
       this.tweens.add({ targets: this.coinText, scale: { from: 1.3, to: 1 }, duration: 220, ease: 'Back.out' });
-      this.tweens.add({ targets: this.coinIcon, scale: { from: 1.3 / TEX_SCALE, to: 0.95 / TEX_SCALE }, duration: 220, ease: 'Back.out' });
+      this.tweens.add({ targets: this.coinIcon, scale: { from: 1.1 / TEX_SCALE, to: 0.75 / TEX_SCALE }, duration: 220, ease: 'Back.out' });
     }
   },
 
@@ -150,6 +151,8 @@ export const MenuMixin = {
     const rule = this.rule || {};
     this.gravityMul = rule.gravity || 1;
     this.spinMul = rule.spin || 1;
+    this.ringScale = rule.ringScale || 1;
+    this.ringR = this.ringTarget();
     if (rule.noBoosters) {
       for (const b of Object.values(this.boost)) {
         b.left = 0;
@@ -165,6 +168,53 @@ export const MenuMixin = {
     this.nextGolden = next.golden;
     this.prepareHeld();
     if (this.hint) this.hint.setVisible(true);
+  },
+
+  // ---------- pause ----------
+
+  openPause() {
+    if (this.state !== 'aim' && this.state !== 'flying') return;
+    const resume = this.holdGame();
+    Sfx.click();
+    const W = this.W;
+    const items = this.panel(90, 300, W - 180, 620);
+    const add = (o) => {
+      items.push(o.setDepth(OVERLAY));
+      return o;
+    };
+    add(this.text(W / 2, 372, 'PAUSED', 50).setOrigin(0.5));
+    items.push(
+      this.button(W / 2, 486, 400, 92, '▶  RESUME', 0x37b24d, () => {
+        items.forEach((o) => o.destroy());
+        resume();
+      }, 34),
+    );
+    items.push(this.button(W / 2, 598, 400, 76, 'RESTART', 0x4c6ef5, () => this.leaveGame(true), 28));
+    items.push(this.button(W / 2, 694, 400, 76, 'HOME', 0x3b5bdb, () => this.leaveGame(false), 28));
+    // settings that last between games
+    const toggle = (x, name, key, apply) => {
+      const label = () => `${name}: ${store.get(key, true) ? 'ON' : 'OFF'}`;
+      items.push(
+        this.button(x, 818, 196, 64, label(), 0x6741d9, (c, text) => {
+          const on = !store.get(key, true);
+          store.set(key, on);
+          apply(on);
+          text.setText(label());
+        }, 21),
+      );
+    };
+    toggle(W / 2 - 104, 'SOUND', 'jd3_sound', (on) => Sfx.setMuted(!on));
+    toggle(W / 2 + 104, 'VIBRATION', 'jd3_vibe', (on) => Haptics.setEnabled(on));
+  },
+
+  /** Leave a game from the pause menu: what was earned is kept; then a new game, or home. */
+  async leaveGame(again) {
+    if (this.state !== 'paused') return;
+    this.state = 'busy';
+    this.bankCoins();
+    this.saveDailyBest();
+    await Ads.betweenGames();
+    this.scene.restart(again ? { play: true, mode: this.mode } : {});
   },
 
   // ---------- the daily challenge ----------

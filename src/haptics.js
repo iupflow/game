@@ -10,6 +10,7 @@ const NATIVE = Capacitor.isNativePlatform();
 
 let label = null;
 let last = 0;
+let enabled = true; // the player can turn vibration off
 
 function iosTick() {
   if (!label) {
@@ -29,6 +30,7 @@ const NATIVE_STYLE = { light: 'LIGHT', medium: 'MEDIUM', heavy: 'HEAVY' };
 const VIBRATE_MS = { light: 10, medium: 22, heavy: 40 };
 
 function fire(level) {
+  if (!enabled) return;
   const now = performance.now();
   if (now - last < 35) return;
   last = now;
@@ -48,6 +50,10 @@ function fire(level) {
 }
 
 export const Haptics = {
+  /** Vibration on or off (the setting in the pause menu). */
+  setEnabled(on) {
+    enabled = !!on;
+  },
   light: () => fire('light'),
   medium: () => fire('medium'),
   heavy: () => fire('heavy'),

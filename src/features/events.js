@@ -1,4 +1,5 @@
 // Cosmic events: every so often, for a little while, something happens to the whole field.
+// They change the situation, never the boosters: nothing here hands out a booster.
 // Mixed into GameScene, so `this` is the scene.
 import Phaser from 'phaser';
 import { Sfx } from '../sfx.js';
@@ -7,22 +8,22 @@ import { TEX_SCALE, portraitKey, PORTRAIT_R } from '../art.js';
 
 export const EVENTS = {
   meteors: { name: 'METEOR SHOWER', text: 'Small planets rain in for a while', ms: 11000, color: '#ffb27a' },
-  gravity: { name: 'GRAVITY SURGE', text: 'Gravity pulls everything in tight', ms: 9000, color: '#c9b8ff' },
-  wormhole: { name: 'WORMHOLES', text: 'Fly into one, come out of the other', ms: 14000, color: '#9fe8ff' },
+  zerog: { name: 'ZERO GRAVITY', text: 'Everything floats apart… then falls back together', ms: 7500, color: '#9fe8ff' },
+  rush: { name: 'STAR RUSH', text: 'Every merge scores double', ms: 12000, color: '#ffd93d' },
   comet: { name: 'GOLDEN COMET', text: 'Tap it to catch it!', ms: 6500, color: '#ffd93d' },
 };
 const EVENTS_FROM = 4; // events start once an Earth has been made
 const FIRST_EVENT_MS = 40000; // of play
 const EVENT_GAP = [38000, 52000];
 const METEOR_EVERY = 850;
-const PORTAL_R = 30;
-const COMET_COINS = 15;
+const FLOAT_MS = 5000; // zero gravity: how long everything floats before gravity comes back
+const COMET_COINS = 20;
 
 export const EventsMixin = {
   resetEvents() {
     this.event = null;
-    this.portals = null;
     this.goldComet = null;
+    this.zeroG = null;
     this.playMs = 0;
     this.nextEventAt = FIRST_EVENT_MS * ((this.rule && this.rule.eventGap) || 1);
   },
@@ -47,14 +48,11 @@ export const EventsMixin = {
     this.banner(def.name, def.text, def.color);
     Sfx.event();
     Haptics.medium();
-    if (id === 'gravity') this.gravBoostUntil = now + def.ms;
-    if (id === 'wormhole') {
-      const a = this.rng() * Math.PI * 2;
-      const r = this.limitRadius() * 0.62;
-      this.portals = [
-        { x: this.CX + Math.cos(a) * r, y: this.CY + Math.sin(a) * r, color: 0xc98cff },
-        { x: this.CX - Math.cos(a) * r, y: this.CY - Math.sin(a) * r, color: 0x7fe3ff },
-      ];
+    if (id === 'zerog') this.startZeroG(now);
+    if (id === 'rush') {
+      this.scoreText.setColor('#ffd93d');
+      this.ringFlash = 1;
+      this.ringFlashColor = 0xffd93d;
     }
     if (id === 'comet') this.launchGoldComet();
   },
@@ -65,12 +63,7 @@ export const EventsMixin = {
       ev.nextAt = this.playMs + METEOR_EVERY;
       this.dropMeteor(now);
     }
-    if (ev.id === 'gravity' && this.playMs >= ev.nextAt) {
-      // ripples running in toward the well
-      ev.nextAt = this.playMs + 700;
-      const ring = this.add.circle(this.CX, this.CY, this.ringScreen() + 30).setStrokeStyle(3, 0xc9b8ff, 0.7).setDepth(36).setBlendMode(Phaser.BlendModes.ADD);
-      this.tweens.add({ targets: ring, props: { radius: { value: 20, ease: 'Quad.in' }, alpha: { value: 0, ease: 'Quad.in' } }, duration: 900, onComplete: () => ring.destroy() });
-    }
+    if (ev.id === 'zerog') this.tickZeroG(now);
     // meteors leave fiery trails while they fly
     if (now - ev.lastFx > 45) {
       ev.lastFx = now;
@@ -86,12 +79,17 @@ export const EventsMixin = {
   endEvent() {
     const ev = this.event;
     this.event = null;
-    this.portals = null;
     if (this.goldComet) this.goldComet.leave();
+    if (ev && ev.id === 'rush') this.scoreText.setColor('#ffffff');
+    this.zeroG = null;
     const [lo, hi] = EVENT_GAP;
     this.nextEventAt = this.playMs + (lo + this.rng() * (hi - lo)) * ((this.rule && this.rule.eventGap) || 1);
-    if (ev && ev.id === 'gravity') this.gravBoostUntil = 0;
     this.refreshEventLabel();
+  },
+
+  /** Star Rush: merges score double while it lasts. */
+  rushOn() {
+    return !!this.event && this.event.id === 'rush';
   },
 
   /** A small planet (the smallest the launcher gives) streaks in from outside the ring. */
@@ -109,36 +107,56 @@ export const EventsMixin = {
     Sfx.meteor();
   },
 
-  /** Wormholes: a planet flying into one comes out of the other, still moving the same way. */
-  stepWormholes(now) {
-    if (!this.portals) return;
-    const [A, B] = this.portals;
+  /**
+   * Zero gravity: everything drifts apart and floats for a few seconds, then gravity comes back
+   * hard and slams the field together again in a new order. No countdown runs meanwhile.
+   */
+  startZeroG(now) {
+    this.zeroG = { back: now + FLOAT_MS, returned: false };
     for (const p of this.pieces) {
-      if (!p.body || (p.portalUntil || 0) > now || p.fusing) continue;
+      if (!p.body) continue;
+      const dx = p.x - this.CX;
+      const dy = p.y - this.CY;
+      const d = Math.hypot(dx, dy) || 1;
+      const out = 1.2 + this.rng() * 1.6;
+      const side = (this.rng() - 0.5) * 1.6;
       const v = p.body.velocity;
-      const speed = Math.hypot(v.x, v.y);
-      if (speed < 1.2) continue;
-      for (const [from, to] of [[A, B], [B, A]]) {
-        if (Math.hypot(p.x - from.x, p.y - from.y) > PORTAL_R + p.r * 0.3) continue;
-        const out = PORTAL_R + p.r * 0.7;
-        this.matter.body.setPosition(p.body, { x: to.x + (v.x / speed) * out, y: to.y + (v.y / speed) * out });
-        p.x = p.body.position.x;
-        p.y = p.body.position.y;
-        p.portalUntil = now + 900;
-        p.impulse(Math.atan2(v.y, v.x), 0.12);
-        for (const q of [from, to]) {
-          const at = this.toScreen(q.x, q.y);
-          const flash = this.add.image(at.x, at.y, 'soft').setTint(q.color).setBlendMode(Phaser.BlendModes.ADD).setDepth(36).setScale(0.5 / TEX_SCALE);
-          this.tweens.add({ targets: flash, scale: 1.2 / TEX_SCALE, alpha: 0, duration: 350, onComplete: () => flash.destroy() });
-        }
-        Sfx.warp();
-        Haptics.light();
-        break;
-      }
+      this.matter.body.setVelocity(p.body, { x: v.x + (dx / d) * out - (dy / d) * side, y: v.y + (dy / d) * out + (dx / d) * side });
+    }
+    this.calmUntil = Math.max(this.calmUntil, now + EVENTS.zerog.ms + 1500);
+    this.ringFlash = 1;
+    this.ringFlashColor = 0x9fe8ff;
+  },
+
+  tickZeroG(now) {
+    const z = this.zeroG;
+    if (!z) return;
+    if (!z.returned && now >= z.back) {
+      z.returned = true;
+      this.floatText(this.W / 2, 300, 'GRAVITY RETURNS!', '#9fe8ff', 32);
+      this.ringFlash = 1;
+      this.ringFlashColor = 0xffffff;
+      this.ringSpinV = 4;
+      Sfx.shock();
+      Haptics.heavy();
+    }
+    // floating dust drifting up while it lasts
+    if (!z.returned && Math.random() < 0.25) {
+      const x = Math.random() * this.W;
+      const y = 300 + Math.random() * 700;
+      const d = this.add.image(x, y, 'dot').setTint(0xbff2ff).setBlendMode(Phaser.BlendModes.ADD).setDepth(17).setAlpha(0).setScale((0.25 + Math.random() * 0.3) / TEX_SCALE);
+      this.tweens.add({ targets: d, alpha: { from: 0, to: 0.7 }, y: y - 60, duration: 900, yoyo: true, onComplete: () => d.destroy() });
     }
   },
 
-  /** A golden comet crosses the top of the screen; tapping it pays stardust and a booster. */
+  /** How gravity is changed by an event right now: almost none while floating, then strong. */
+  eventGravity(now) {
+    const z = this.zeroG;
+    if (!z) return 1;
+    return now < z.back ? 0.08 : 2.6;
+  },
+
+  /** A golden comet crosses the top of the screen; tapping it pays stardust. */
   launchGoldComet() {
     const fromLeft = this.rng() < 0.5;
     const y = 300 + this.rng() * 120;
@@ -184,15 +202,6 @@ export const EventsMixin = {
     c.caught = true;
     const { x, y } = c.img;
     this.gainCoinsAt(COMET_COINS, x, y);
-    // and a booster, if there are boosters today
-    if (!(this.rule && this.rule.noBoosters)) {
-      const keys = ['laser', 'fusion', 'vortex', 'smash', ...(this.cometUnlocked ? ['comet'] : [])];
-      const key = keys[Math.floor(Math.random() * keys.length)];
-      this.boost[key].left++;
-      this.boost[key].got++;
-      this.refreshBoosters();
-      this.floatText(x, y + 40, `+1 ${this.btn[key].boosterName}`, '#9fe8ff', 26);
-    }
     for (let i = 0; i < 16; i++) {
       const a = (i / 16) * Math.PI * 2;
       const sp = this.add.image(x, y, i % 2 ? 'spark' : 'dot').setTint(0xffe08a).setBlendMode(Phaser.BlendModes.ADD).setDepth(46).setScale(0.5 / TEX_SCALE);
@@ -205,32 +214,7 @@ export const EventsMixin = {
     return true;
   },
 
-  /** Portals, drawn every frame. */
-  drawEvents(now) {
-    const g = this.eventGfx;
-    g.clear();
-    if (!this.portals) return;
-    const s = this.fieldScale;
-    const left = this.event ? (this.event.until - this.playMs) / 600 : 0;
-    const fade = Math.max(0, Math.min(1, left));
-    for (const [i, q] of this.portals.entries()) {
-      const at = this.toScreen(q.x, q.y);
-      const R = PORTAL_R * s;
-      g.fillStyle(0x05020f, 0.75 * fade);
-      g.fillCircle(at.x, at.y, R * 0.8);
-      for (let k = 0; k < 3; k++) {
-        const a = now * 0.004 * (i ? -1 : 1) + (k * Math.PI * 2) / 3;
-        g.lineStyle(3, q.color, 0.9 * fade);
-        g.beginPath();
-        g.arc(at.x, at.y, R * (0.55 + k * 0.22), a, a + 2.2, false);
-        g.strokePath();
-      }
-      g.lineStyle(2, q.color, 0.5 * fade);
-      g.strokeCircle(at.x, at.y, R);
-    }
-  },
-
-  /** A small label under the stardust counter while an event lasts. */
+  /** A small label under the pause button while an event lasts. */
   refreshEventLabel() {
     const ev = this.event;
     if (!ev || ev.id === 'comet') {
@@ -238,6 +222,7 @@ export const EventsMixin = {
       return;
     }
     const left = Math.max(0, Math.ceil((ev.until - this.playMs) / 1000));
-    this.eventLabel.setVisible(true).setText(`${EVENTS[ev.id].name}  ${left}s`).setColor(EVENTS[ev.id].color);
+    const name = ev.id === 'rush' ? 'STAR RUSH ×2' : EVENTS[ev.id].name;
+    this.eventLabel.setVisible(true).setText(`${name}  ${left}s`).setColor(EVENTS[ev.id].color);
   },
 };

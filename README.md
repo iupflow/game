@@ -16,7 +16,11 @@ higher score multiplier.
 The game opens on a home screen: Play, the Daily Challenge, the Shop and the Album. Along
 the way the launcher sometimes gives special planets, some bodies have powers when they are
 made, cosmic events shake things up every so often, and stardust earned in play buys planet
-skins and backgrounds.
+skins and backgrounds. The pause button (top, middle) leads to resume, restart, home and the
+sound and vibration settings; leaving the app pauses the game too.
+
+Boosters only ever come from their per-game allowance: no event, special planet or reward
+hands out extra ones, so the allowance stays a real limit.
 
 ## Run
 
@@ -32,9 +36,9 @@ The iOS and Android apps are built with Capacitor; see [BUILD.md](BUILD.md).
 
 - `src/GameScene.js` – gameplay: radial gravity, launching, merging, boosters, the
   black hole sequence, album, game over
-- `src/features/` – mixed into the scene: `specials.js` (rainbow star, star bomb, golden
-  planets), `abilities.js` (planet powers), `events.js` (cosmic events), `menu.js` (home
-  screen, shop, daily challenge, stardust)
+- `src/features/` – mixed into the scene: `specials.js` (star bomb, golden planets),
+  `abilities.js` (planet powers), `events.js` (cosmic events), `menu.js` (home screen,
+  pause menu, shop, daily challenge, stardust)
 - `src/meta.js` – what lasts between games: stardust, purchases, today's challenge;
   `src/themes.js` – skins and backgrounds; `src/daily.js` – the seeded daily challenge
 - `src/Planet.js` – one planet: a hard physics core wrapped in a springy skin, plus
@@ -128,8 +132,6 @@ The iOS and Android apps are built with Capacitor; see [BUILD.md](BUILD.md).
 Once an Earth has been made, the launcher sometimes gives something special (shown in NEXT,
 explained the first time each one comes):
 
-- Rainbow Star (about 3.5% of launches): merges with whatever planet it touches first,
-  lifting it one step up the chain
 - Star Bomb (about 3%): arms when it lands, flashes faster and faster, then blows away the
   small planets around it (up to Mars, or one step above the smallest the launcher gives)
   and pushes the rest back. A blast sets off other bombs
@@ -150,23 +152,25 @@ Some bodies do something the moment a merge makes them. The discovery banner say
 ## Cosmic events
 
 From the first Earth on, about every 40–50 seconds of play something happens for a while,
-announced with a banner and a countdown under the stardust counter:
+announced with a banner and a countdown under the pause button. Events change the situation;
+none of them gives boosters:
 
 - Meteor Shower (11 s): small planets streak in from outside the ring
-- Gravity Surge (9 s): gravity doubles and pulls everything in tight
-- Wormholes (14 s): a planet flying into one portal comes out of the other, still moving
-- Golden Comet: it crosses the top of the screen; tap it for 15 stardust and a booster
+- Zero Gravity (7.5 s): everything drifts apart and floats for 5 seconds, then gravity comes
+  back hard and slams the field together in a new order. No countdown runs meanwhile
+- Star Rush (12 s): every merge scores double
+- Golden Comet: it crosses the top of the screen; tap it for 20 stardust
 
 ## Stardust, the shop and the daily challenge
 
-- Stardust is earned by playing: one for every 150 points at the end of a game, plus golden
-  planets, golden comets and the daily reward
+- Stardust is earned by playing: one for every 150 points at the end of a game (or when it
+  is left from the pause menu), plus golden planets, golden comets and the daily reward
 - The shop sells planet skins (Cute Faces with blinking eyes, Frost, Royal Gold) and
   backgrounds (Aurora, Crimson, Deep Ocean); the page around the game follows the background
 - The daily challenge gives everyone the same planets in the same order (the launcher runs
   on a seed made from the date), plus a rule for the day (low gravity, golden day, meteor
-  day, rainbow day, no boosters but more bombs, a faster-turning field, wormhole day) and a
-  goal body. Reaching it the first time that day pays 150–200 stardust
+  day, a ring 8% smaller, no boosters but more bombs, a faster-turning field, zero-G day)
+  and a goal body. Reaching it the first time that day pays 150–200 stardust
 
 ## Losing
 

@@ -33,10 +33,10 @@ export const DAILY_RULES = [
   { id: 'lowgrav', name: 'Low Gravity', text: 'Gravity is weaker today', gravity: 0.65, goal: 8, reward: 150 },
   { id: 'golden', name: 'Golden Day', text: 'Golden planets come 4x as often', golden: 4, goal: 8, reward: 150 },
   { id: 'meteors', name: 'Meteor Day', text: 'Meteor showers, again and again', events: ['meteors'], eventGap: 0.55, goal: 8, reward: 150 },
-  { id: 'rainbow', name: 'Rainbow Day', text: 'Rainbow stars come 3x as often', rainbow: 3, goal: 8, reward: 150 },
+  { id: 'tight', name: 'Tight Space', text: 'The ring is 8% smaller', ringScale: 0.92, goal: 7, reward: 200 },
   { id: 'bare', name: 'Bare Hands', text: 'No boosters, but bombs come 3x as often', noBoosters: true, bomb: 3, goal: 7, reward: 200 },
   { id: 'spin', name: 'Spin Cycle', text: 'The field turns 3x as fast', spin: 3, goal: 7, reward: 200 },
-  { id: 'wormholes', name: 'Wormhole Day', text: 'Wormholes open again and again', events: ['wormhole'], eventGap: 0.6, goal: 8, reward: 150 },
+  { id: 'zerog', name: 'Zero-G Day', text: 'Zero gravity, again and again', events: ['zerog'], eventGap: 0.6, goal: 8, reward: 150 },
 ];
 
 /** The challenge for a given day: its rule, goal, reward and the seed for the launcher. */

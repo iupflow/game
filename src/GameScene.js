@@ -171,7 +171,6 @@ export class GameScene extends Phaser.Scene {
     for (const kind of FIRST_KINDS) makeKindTextures(this, kind);
 
     // special planets, planet powers, cosmic events, stardust, the daily challenge
-    this.specialQueue = [];
     this.storms = [];
     this.sweeps = [];
     this.runCoins = 0; // stardust picked up in this game
@@ -179,19 +178,22 @@ export class GameScene extends Phaser.Scene {
     this.coinsBanked = 0; // stardust from this game already in the wallet (a revive can end a game twice)
     this.playMs = 0;
     this.event = null;
-    this.portals = null;
     this.goldComet = null;
+    this.zeroG = null;
     this.rng = Math.random; // the launcher's dice; seeded in the daily challenge
     this.rule = null; // the daily challenge's twist
     this.mode = 'normal';
     this.daily = null;
     this.gravityMul = 1;
     this.spinMul = 1;
+    this.ringScale = 1;
     this.lastWasSpecial = false;
     this.nextGolden = false;
     this.gameUi = []; // controls hidden on the home screen
     this.homeItems = null;
     this.applyLooks();
+    Sfx.setMuted(!store.get('jd3_sound', true));
+    Haptics.setEnabled(store.get('jd3_vibe', true));
 
     this.pieces = [];
     this.dying = [];
@@ -270,7 +272,6 @@ export class GameScene extends Phaser.Scene {
     this.dangerGfx = this.add.graphics().setDepth(37);
     this.beamGfx = this.add.graphics().setDepth(FX + 2).setBlendMode(Phaser.BlendModes.ADD);
     this.abilityGfx = this.add.graphics().setDepth(33).setBlendMode(Phaser.BlendModes.ADD);
-    this.eventGfx = this.add.graphics().setDepth(16);
     this.buildField();
     this.buildHud();
     this.buildBottomBar();
@@ -340,6 +341,13 @@ export class GameScene extends Phaser.Scene {
     };
     this.input.on('pointerup', release);
     this.input.on('pointerupoutside', release);
+
+    // leaving the app (or the browser tab) pauses the game
+    const onHidden = () => {
+      if (this.state === 'aim' || this.state === 'flying') this.openPause();
+    };
+    this.game.events.on('hidden', onHidden);
+    this.events.once('shutdown', () => this.game.events.off('hidden', onHidden));
     nativeReady();
   }
 
@@ -412,7 +420,7 @@ export class GameScene extends Phaser.Scene {
 
   /** How big the ring should be: just enough room for the biggest body so far to be matched. */
   ringTarget() {
-    return Math.max(RING[Math.min(this.runMax, MAX_PLANET)], this.reviveRing);
+    return Math.max(RING[Math.min(this.runMax, MAX_PLANET)], this.reviveRing) * this.ringScale;
   }
 
   /** The part of the world the player's finger can reach: the whole window, in world units. */
@@ -624,7 +632,7 @@ export class GameScene extends Phaser.Scene {
     ui.push(this.text(40, 36, 'SCORE', 20, '#b9a8e6'));
     this.scoreText = this.text(40, 56, '0', 58);
     this.bestText = this.text(40, 122, 'BEST ' + this.best, 20, '#b9a8e6');
-    this.universeText = this.text(40, 148, '', 20, '#ffd93d');
+    this.universeText = this.text(40, 190, '', 20, '#ffd93d');
     ui.push(this.scoreText, this.bestText, this.universeText);
 
     // next planet; tap to swap
@@ -635,6 +643,18 @@ export class GameScene extends Phaser.Scene {
     this.tappable(zone, () => this.swap(), 1);
     this.nextIcon = this.portrait(nx, ny, 0, 28).setDepth(UI);
     ui.push(zone, this.nextIcon, this.text(nx, 153, 'tap to swap', 14, '#8f7fc2').setOrigin(0.5, 0));
+
+    // pause, at the top in the middle
+    const pg = this.add.graphics();
+    pg.fillStyle(0xffffff, 0.12);
+    pg.fillCircle(0, 0, 30);
+    pg.fillStyle(0xffffff, 0.9);
+    pg.fillRoundedRect(-10, -12, 7, 24, 2);
+    pg.fillRoundedRect(3, -12, 7, 24, 2);
+    const pause = this.add.container(W / 2, 58, [pg]).setDepth(UI);
+    pause.setSize(64, 64);
+    this.tappable(pause, () => this.openPause(), 0.9);
+    ui.push(pause);
 
     this.comboText = this.text(W / 2, 232, '', 40, '#ffd93d').setOrigin(0.5).setAlpha(0).setDepth(FX + 2);
     this.buildCoins();
@@ -1759,7 +1779,8 @@ export class GameScene extends Phaser.Scene {
     const list = this.pieces;
     const crunch = this.state === 'crunch';
     const scattering = now < this.scatterUntil;
-    const g = GRAVITY * this.gravityMul * (crunch ? 2.6 : scattering ? 0.7 : now < this.gravBoostUntil ? 2 : 1);
+    const g = GRAVITY * this.gravityMul * this.eventGravity(now) * (crunch ? 2.6 : scattering ? 0.7 : now < this.gravBoostUntil ? 2 : 1);
+    const floating = !!this.zeroG && now < this.zeroG.back; // zero gravity: planets drift freely
     const swirl = crunch ? 0.45 : 0;
     const damping = scattering ? BOUNCY_DAMPING : SKIN_DAMPING;
     const restitution = scattering ? BOUNCY_RESTITUTION : 0.12;
@@ -1773,7 +1794,7 @@ export class GameScene extends Phaser.Scene {
       const f = (g * Math.min(1, d / 40) * b.mass) / STEP2 / d;
       b.force.x += (dx - dy * swirl) * f;
       b.force.y += (dy + dx * swirl) * f;
-      const drag = p.flying ? FLIGHT_DRAG : scattering ? SCATTER_DRAG : DRAG;
+      const drag = p.flying ? FLIGHT_DRAG : scattering || floating ? SCATTER_DRAG : DRAG;
       if (b.frictionAir !== drag) b.frictionAir = drag;
       if (b.restitution !== restitution) b.restitution = restitution;
     }
@@ -1835,7 +1856,6 @@ export class GameScene extends Phaser.Scene {
     this.stepVortex(now); // may swallow planets, so the count is taken only after these
     this.stepStorms(now);
     this.stepSweeps(now);
-    this.stepWormholes(now);
 
     const n = list.length;
     const previous = this.contacts;
@@ -2009,6 +2029,7 @@ export class GameScene extends Phaser.Scene {
       this.lastMergeAt = now;
       const { shown, points } = this.evolve(x, y, tier);
       let total = points * this.combo * this.universe;
+      if (this.rushOn()) total *= 2; // Star Rush
       if (golden) {
         // a golden planet pays triple, and some stardust
         total *= GOLDEN_POINTS;
@@ -2021,7 +2042,6 @@ export class GameScene extends Phaser.Scene {
       Haptics.merge(tier + 1);
       if (tier >= 2) this.slowUntil = now + 60 + tier * 7;
     }
-    this.processSpecials(now);
   }
 
   addScore(points) {
@@ -2357,7 +2377,6 @@ export class GameScene extends Phaser.Scene {
     this.drawFusion(now);
     this.drawVortex(now);
     this.drawAbilities(now);
-    this.drawEvents(now);
     this.drawDanger(now);
     this.drawBeam(now);
   }
@@ -2704,13 +2723,50 @@ export class GameScene extends Phaser.Scene {
 
   // ---------- album ----------
 
-  openAlbum() {
-    if (this.state !== 'aim' && this.state !== 'flying' && this.state !== 'menu') return;
+  /**
+   * Stops the game for a menu (the album, the pause menu). Returns a function that starts it
+   * again: time spent in the menu does not count against cooldowns, boosters, powers, events
+   * or danger timers.
+   */
+  holdGame() {
     const before = this.state;
     const pausedAt = this.time.now;
     this.state = 'paused';
     this.aiming = false;
     this.setPower(0);
+    if (this.targeting) this.cancelTargeting();
+    return () => {
+      const pausedFor = this.time.now - pausedAt;
+      this.nextHeldAt += pausedFor;
+      this.lastMergeAt += pausedFor;
+      this.calmUntil += pausedFor;
+      this.gravBoostUntil += pausedFor;
+      this.scatterUntil += pausedFor;
+      this.fusionUntil += pausedFor;
+      this.slowUntil += pausedFor;
+      this.nextPairAt = (this.nextPairAt || 0) + pausedFor;
+      if (this.vortex) {
+        this.vortex.born += pausedFor;
+        this.vortex.until += pausedFor;
+      }
+      if (this.zeroG) this.zeroG.back += pausedFor;
+      for (const list of [this.storms, this.sweeps]) {
+        for (const e of list) {
+          e.born += pausedFor;
+          e.until += pausedFor;
+        }
+      }
+      for (const p of this.pieces) {
+        p.born += pausedFor;
+        if (p.armedAt) p.armedAt += pausedFor;
+      }
+      this.state = before;
+    };
+  }
+
+  openAlbum() {
+    if (this.state !== 'aim' && this.state !== 'flying' && this.state !== 'menu') return;
+    const resume = this.holdGame();
     Sfx.click();
     const found = this.found();
     for (const kind of found) if (!hasKindTextures(this, kind)) makeKindTextures(this, kind);
@@ -2742,21 +2798,7 @@ export class GameScene extends Phaser.Scene {
     });
     const close = this.button(W / 2, top + h - 66, 300, 76, 'CLOSE', 0x4c6ef5, () => {
       items.forEach((o) => o.destroy());
-      // time spent in the album does not count against cooldowns, boosters or danger timers
-      const pausedFor = this.time.now - pausedAt;
-      this.nextHeldAt += pausedFor;
-      this.lastMergeAt += pausedFor;
-      this.calmUntil += pausedFor;
-      this.gravBoostUntil += pausedFor;
-      this.scatterUntil += pausedFor;
-      this.fusionUntil += pausedFor;
-      this.nextPairAt = (this.nextPairAt || 0) + pausedFor;
-      if (this.vortex) {
-        this.vortex.born += pausedFor;
-        this.vortex.until += pausedFor;
-      }
-      for (const p of this.pieces) p.born += pausedFor;
-      this.state = before;
+      resume();
     });
     items.push(close);
   }

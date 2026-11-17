@@ -433,27 +433,6 @@ const SURFACES = {
     };
   },
 
-  // A wildcard: pearly, swirling bands of every colour
-  rainbow() {
-    const n = makeNoise(151);
-    const m = makeNoise(152);
-    return (P, mu, out) => {
-      const lon = Math.atan2(P[2], P[0]) / TAU;
-      const swirl = fbm(n, P[0] * 1.6, P[1] * 1.6, P[2] * 1.6, 3);
-      const h = (((lon + P[1] * 0.35 + swirl * 0.45) % 1) + 1) % 1;
-      // hue to a soft, pastel rainbow
-      const k = (o) => {
-        const t = (h * 6 + o) % 6;
-        return Math.max(0, Math.min(1, Math.abs(t - 3) - 1));
-      };
-      out[0] = 150 + 105 * k(0);
-      out[1] = 150 + 105 * k(4);
-      out[2] = 150 + 105 * k(2);
-      // pearly streaks
-      mixTo(out, [255, 255, 255], smooth(0.35, 0.75, fbm(m, P[0] * 3, P[1] * 3, P[2] * 3, 2)) * 0.45);
-    };
-  },
-
   // A star bomb: dark rock split by glowing cracks
   bomb() {
     const n = makeNoise(161);
@@ -880,23 +859,6 @@ const PARTS = {
       }
     },
   },
-  rainbowGlow: {
-    size: 1.7,
-    blend: 'add',
-    spin: 'slow',
-    draw(ctx, R) {
-      glow(ctx, R, 1.7, [[0, 'rgba(255,255,255,.55)'], [0.4, 'rgba(220,200,255,.22)'], [1, 'rgba(200,160,255,0)']]);
-      // a halo of every colour
-      for (let i = 0; i < 36; i++) {
-        const a = (i / 36) * TAU;
-        ctx.beginPath();
-        ctx.arc(0, 0, R * 1.22, a, a + TAU / 36 + 0.02);
-        ctx.strokeStyle = `hsla(${(i / 36) * 360}, 90%, 70%, .5)`;
-        ctx.lineWidth = R * 0.12;
-        ctx.stroke();
-      }
-    },
-  },
   bombGlow: {
     size: 1.8,
     blend: 'add',
@@ -965,8 +927,6 @@ export const TIERS = [
 
 export const SPECIALS = {
   comet: { name: 'Comet', r: 24, color: 0xc6e2ff, surface: 'comet', light: { rim: 0xe6fcff, rimK: 0.7, sheen: 0.14, gloss: 0.45 }, parts: [['coma', false], ['cometTail', false]] },
-  // launched now and then: merges with whatever it touches first, lifting it one step
-  rainbow: { name: 'Rainbow Star', r: 24, color: 0xf2c9ff, surface: 'rainbow', light: { rim: 0xffffff, rimK: 0.6, sheen: 0.18, gloss: 0.5 }, parts: [['rainbowGlow', false]] },
   // launched now and then: blows the small planets around it away
   bomb: { name: 'Star Bomb', r: 26, color: 0xff7a2e, surface: 'bomb', light: { rim: 0xffb27a, rimK: 0.5, sheen: 0.08, gloss: 0.4 }, parts: [['bombGlow', false]] },
   // a dense ball of dark matter: deep black, a cold violet edge, a hard polished glint
@@ -1058,7 +1018,6 @@ const FRAMES = {
   blackhole: [0, 0, 0],
   comet: [0.3, 0.4, 0.6],
   dark: [0.3, 0.3, 0.2],
-  rainbow: [0.4, 0.3, 0.5],
   bomb: [0.3, -0.2, 0.4],
 };
 
@@ -1129,7 +1088,7 @@ export const surfaceKey = (kind) => `surface_${kind}`;
 export const lightKey = (kind) => `light_${kind}`;
 export const partKey = (kind, i) => `part_${kind}_${i}`;
 export const portraitKey = (kind) => `portrait_${kind}`;
-export const ALL_KINDS = [...TIERS.keys(), 'comet', 'wrecker', 'rainbow', 'bomb'];
+export const ALL_KINDS = [...TIERS.keys(), 'comet', 'wrecker', 'bomb'];
 
 /** Everything one body needs: surface, lighting, parts and its portrait. */
 export function makeKindTextures(scene, kind) {

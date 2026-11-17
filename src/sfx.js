@@ -7,9 +7,10 @@ let master = null;
 let reverb = null;
 let noiseBuf = null;
 let paused = false; // the app is in the background: no sound at all
+let muted = false; // the player turned sound off
 
 function audio() {
-  if (paused) return null;
+  if (paused || muted) return null;
   if (!ac) {
     const AC = window.AudioContext || window.webkitAudioContext;
     if (!AC) return null;
@@ -346,6 +347,11 @@ const MERGE = [
 ];
 
 export const Sfx = {
+  /** Sound on or off (the setting in the pause menu). */
+  setMuted(m) {
+    muted = !!m;
+  },
+
   /** The app went to the background. */
   pause() {
     paused = true;
@@ -397,12 +403,6 @@ export const Sfx = {
   ringGrow() {
     noise({ dur: 0.7, gain: 0.05, type: 'bandpass', f: 300, f2: 2400, q: 1.6, attack: 0.15, wet: 0.5 });
     [0, 4, 7].forEach((s, i) => tone({ f: note(7 + s), dur: 0.8, gain: 0.035, type: 'triangle', attack: 0.08, delay: 0.1 + i * 0.07, wet: 0.6 }));
-  },
-
-  /** A rainbow star melts into a planet: a sweep of bright notes up the scale. */
-  rainbow() {
-    [0, 2, 4, 5, 7, 9].forEach((s, i) => bell({ f: note(12 + s), dur: 0.5, gain: 0.05, delay: i * 0.045, wet: 0.5 }));
-    noise({ dur: 0.4, gain: 0.04, type: 'highpass', f: 5000, attack: 0.05, wet: 0.6 });
   },
 
   /** A star bomb goes off. */
