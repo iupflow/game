@@ -52,6 +52,12 @@ export const Sfx = {
     tone(120, 0.45, 'sawtooth', 0.2, 30);
     tone(60, 0.5, 'sine', 0.25, 25);
   },
+  tick(step) {
+    tone(420 + step * 110, 0.045, 'square', 0.035);
+  },
+  bonk() {
+    tone(180, 0.12, 'triangle', 0.12, 120);
+  },
   swallow(n) {
     const f = 180 * Math.pow(1.06, Math.min(n, 30));
     tone(f * 2, 0.18, 'sine', 0.12, f);

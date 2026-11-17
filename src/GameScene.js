@@ -3,7 +3,7 @@ import { Ads, store } from './ads.js';
 import { Sfx } from './sfx.js';
 import { Haptics } from './haptics.js';
 import { TIERS, HOLE, MAX_PLANET, TEX_SCALE, PORTRAIT_R, makeTextures, portraitKey, shade } from './art.js';
-import { Planet, CORE } from './Planet.js';
+import { Planet, CORE, DRAG, SQUASH_GAIN } from './Planet.js';
 import { PlanetBatch } from './PlanetBatch.js';
 
 export const W = 720;
@@ -11,25 +11,44 @@ export const H = 1280;
 
 const CX = W / 2; // the gravity well
 const CY = 640;
+const CAPTURE_R = 34; // a launched planet that reaches the centre untouched is caught here
+const CAPTURE_STEPS = 50;
 const R_LIMIT = 275; // a settled planet reaching past this ring ends the game
-const R_LAUNCH = 306; // planets are launched from this orbit
+const R_LAUNCH = 300; // planets wait on this orbit before launch
 const STEP = 1000 / 60;
 const STEP2 = STEP * STEP;
-const GRAVITY = 0.36; // pull toward the centre, in px per step^2
-const LAUNCH_SPEED = 13;
+const GRAVITY = 0.15; // pull toward the centre, in px per step^2
+const MIN_SPEED = 3.5; // launch speed range, in px per step
+const MAX_SPEED = 28;
+const PULL_DEAD = 22; // a drag shorter than this does not arm a shot
+const PULL_MAX = 250; // drag length for full power
+const PULL_BACK = 16; // how far the planet visibly draws back at full power
+const FLIGHT_DRAG = 0.002; // air drag while a launched planet is still in flight
+const IMPACT_SQUASH = 0.0114; // peak squash per unit of impact speed, between equal weights
+const MAX_SQUASH = 0.42;
+const RIPPLE_MIN = 0.8; // planets pressed together faster than this keep squashing
 const SKIN_SPRING = 0.13; // how hard the soft skins push back (lower = squishier)
 const SKIN_DAMPING = 0.2;
 const WORLD_SPIN = 0.07; // the whole field slowly turns, radians per second
 const SHOT_COOLDOWN = 450;
 const DANGER_LIMIT_MS = 1800;
-const SETTLE_MS = 1300;
-const COMET_COST = 150;
+const SETTLE_MS = 1000;
+const SETTLED_SPEED = 1.2; // only planets slower than this count as resting outside the ring
+const COMET_BASE = 150; // energy for the first comet of a game
+const COMET_STEP = 60; // every comet launched makes the next one cost this much more
 const FONT = 'system-ui, -apple-system, "Segoe UI", Roboto, sans-serif';
 const UI = 50;
 const FX = 40;
 const OVERLAY = 100;
 const INITIAL_SEEN = [0, 1, 2];
 const SPAWN_WEIGHTS = [38, 30, 20, 12]; // only the four smallest bodies are ever launched
+
+function mix(c1, c2, t) {
+  const ch = (c, s) => (c >> s) & 255;
+  const m = (s) => Math.round(ch(c1, s) + (ch(c2, s) - ch(c1, s)) * t);
+  return (m(16) << 16) | (m(8) << 8) | m(0);
+}
+const powerColor = (p) => (p < 0.5 ? mix(0x7fe3ff, 0xffd84a, p * 2) : mix(0xffd84a, 0xff5a4d, (p - 0.5) * 2));
 
 export class GameScene extends Phaser.Scene {
   constructor() {
@@ -57,10 +76,15 @@ export class GameScene extends Phaser.Scene {
     this.worldRot = 0;
     this.aimAngle = Math.PI / 2;
     this.aiming = false;
-    this.aimCancel = false;
+    this.pullStart = null;
+    this.power = 0;
+    this.pullStep = 0;
+    this.pressAt = 0;
+    this.lastNudgeAt = -1e9;
     this.gravX = CX;
     this.gravY = CY;
     this.gravScale = 1;
+    this.maxTier = -1;
 
     this.score = 0;
     this.best = store.get('jd2_best', 0);
@@ -71,6 +95,7 @@ export class GameScene extends Phaser.Scene {
     this.biggest = 0;
     this.energy = 0;
     this.cometPending = false;
+    this.cometUses = 0;
     this.bombs = 1;
     this.shakes = 1;
     this.revived = false;
@@ -78,8 +103,10 @@ export class GameScene extends Phaser.Scene {
 
     this.drawBackground();
     this.backLayer = this.add.container(CX, CY).setDepth(10);
+    this.bandGfx = this.add.graphics().setDepth(15);
     this.batch = new PlanetBatch(this, CX, CY).setDepth(20);
     this.frontLayer = this.add.container(CX, CY).setDepth(30);
+    this.aimGfx = this.add.graphics().setDepth(36);
     this.buildField();
     this.buildHud();
     this.buildBottomBar();
@@ -87,29 +114,38 @@ export class GameScene extends Phaser.Scene {
     this.dots = [];
     for (let i = 0; i < 12; i++) this.dots.push(this.add.image(0, 0, 'dot').setDepth(35).setVisible(false));
 
-    const tutorials = store.get('jd2_tut', 0);
+    const tutorials = store.get('jd2_tut2', 0);
     if (tutorials < 3) {
-      store.set('jd2_tut', tutorials + 1);
-      this.hint = this.text(W / 2, 1066, 'Slide around the ring  •  Release to launch', 24, '#ffffff').setOrigin(0.5).setAlpha(0.85);
+      store.set('jd2_tut2', tutorials + 1);
+      this.hint = this.text(W / 2, 1066, 'Pull back to aim  •  Release to launch', 24, '#ffffff').setOrigin(0.5).setAlpha(0.85);
       this.tweens.add({ targets: this.hint, alpha: 0.35, duration: 700, yoyo: true, repeat: -1 });
     }
 
     this.nextKind = this.rollTier();
     this.prepareHeld();
 
+    // slingshot: press anywhere, pull away from the well, release.
+    // The pull's direction picks where on the orbit the planet starts; its length sets the power.
     this.input.on('pointerdown', (p, over) => {
-      if (over.length || this.state !== 'aim') return;
+      if (over.length || this.state !== 'aim' || !this.held) return;
       this.aiming = true;
-      this.updateAim(p);
+      this.pullStart = { x: p.worldX, y: p.worldY };
+      this.pressAt = this.time.now;
+      this.setPower(0);
     });
     this.input.on('pointermove', (p) => {
-      if (this.aiming) this.updateAim(p);
+      if (this.aiming) this.updatePull(p);
     });
     const release = (p) => {
       if (!this.aiming) return;
-      this.updateAim(p);
+      this.updatePull(p);
       this.aiming = false;
-      if (!this.aimCancel) this.fire();
+      if (this.power > 0 && this.state === 'aim') {
+        this.fire();
+      } else {
+        if (this.state === 'aim' && this.time.now - this.pressAt < 300) this.nudgeHint();
+        this.setPower(0);
+      }
     };
     this.input.on('pointerup', release);
     this.input.on('pointerupoutside', release);
@@ -135,6 +171,21 @@ export class GameScene extends Phaser.Scene {
     const dx = x - CX;
     const dy = y - CY;
     return { x: CX + dx * c - dy * s, y: CY + dx * s + dy * c };
+  }
+
+  floatText(x, y, str, color, size = 26) {
+    const t = this.text(x, y, str, size, color).setOrigin(0.5).setDepth(FX + 1).setStroke('#150a33', 6);
+    this.tweens.add({ targets: t, y: y - 60, alpha: 0, duration: 900, ease: 'Cubic.out', onComplete: () => t.destroy() });
+  }
+
+  fieldMaxTier() {
+    let m = -1;
+    for (const p of this.pieces) if (p.tier > m) m = p.tier;
+    return m;
+  }
+
+  cometCost() {
+    return COMET_BASE + COMET_STEP * this.cometUses;
   }
 
   // ---------- setup ----------
@@ -168,8 +219,12 @@ export class GameScene extends Phaser.Scene {
     this.limitRing.setAlpha(0.4);
     const well = this.add.image(0, 0, 'soft').setScale(2.6 / TEX_SCALE).setTint(0x9f6bff).setAlpha(0.55).setBlendMode(Phaser.BlendModes.ADD);
     this.tweens.add({ targets: well, scale: 3.3 / TEX_SCALE, alpha: 0.3, duration: 1500, yoyo: true, repeat: -1, ease: 'Sine.inOut' });
-    const core = this.add.image(0, 0, 'soft').setScale(0.5 / TEX_SCALE).setBlendMode(Phaser.BlendModes.ADD);
-    this.backLayer.add([g, this.limitRing, well, core]);
+    // the heart of the well
+    const coreGlow = this.add.image(0, 0, 'soft').setScale(0.7 / TEX_SCALE).setTint(0xd9c8ff).setBlendMode(Phaser.BlendModes.ADD);
+    const coreBall = this.add.circle(0, 0, 9, 0xf6f0ff);
+    this.tweens.add({ targets: coreGlow, scale: 0.95 / TEX_SCALE, duration: 900, yoyo: true, repeat: -1, ease: 'Sine.inOut' });
+    this.coreParts = [coreGlow, coreBall];
+    this.backLayer.add([g, this.limitRing, well, coreGlow, coreBall]);
   }
 
   drawLimitRing(color) {
@@ -212,7 +267,7 @@ export class GameScene extends Phaser.Scene {
 
   drawMeter() {
     const g = this.meterGfx;
-    const frac = this.cometPending ? 1 : Math.min(1, this.energy / COMET_COST);
+    const frac = this.cometPending ? 1 : Math.min(1, this.energy / this.cometCost());
     g.clear();
     g.fillStyle(0xffffff, 0.08);
     g.fillCircle(CX, 86, 44);
@@ -318,6 +373,10 @@ export class GameScene extends Phaser.Scene {
       this.meterLabel.setText('COMET').setColor('#b9a8e6');
       this.drawMeter();
       this.setHeld('comet');
+      if (!store.get('jd2_comet_tip', false)) {
+        store.set('jd2_comet_tip', true);
+        this.banner('COMET', 'Upgrades any planet except your biggest', '#7fe3ff', 'comet');
+      }
     } else {
       this.setHeld(this.nextKind);
       this.nextKind = this.rollTier();
@@ -332,7 +391,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   swap() {
-    if (this.state !== 'aim' || !this.held || this.held.tier < 0) return;
+    if (this.state !== 'aim' || !this.held || this.held.tier < 0 || this.aiming) return;
     Sfx.click();
     Haptics.light();
     const current = this.held.kind;
@@ -341,34 +400,85 @@ export class GameScene extends Phaser.Scene {
     this.refreshNext();
   }
 
-  updateAim(p) {
-    const dx = p.worldX - CX;
-    const dy = p.worldY - CY;
-    // releasing over the top or bottom bars cancels the shot
-    this.aimCancel = p.worldY < 190 || p.worldY > 1130;
-    if (Math.hypot(dx, dy) > 36) this.aimAngle = Math.atan2(dy, dx);
+  updatePull(p) {
+    const dx = p.worldX - this.pullStart.x;
+    const dy = p.worldY - this.pullStart.y;
+    const len = Math.hypot(dx, dy);
+    if (len < PULL_DEAD) {
+      this.setPower(0); // dragging back to where you started cancels the shot
+      return;
+    }
+    this.aimAngle = Math.atan2(dy, dx);
+    this.setPower(Math.min(1, (len - PULL_DEAD) / (PULL_MAX - PULL_DEAD)));
   }
 
-  /** The waiting planet sits on the launch orbit, at the angle of the player's finger. */
+  setPower(v) {
+    this.power = v;
+    // a tick when the shot arms and at every quarter of power, felt as much as heard
+    const step = v <= 0 ? 0 : Math.min(5, 1 + Math.floor(v * 4));
+    if (step > this.pullStep) {
+      Sfx.tick(step);
+      if (step === 5) Haptics.medium();
+      else Haptics.light();
+    }
+    this.pullStep = step;
+  }
+
+  nudgeHint() {
+    const now = this.time.now;
+    if (now - this.lastNudgeAt < 1500) return;
+    this.lastNudgeAt = now;
+    this.floatText(W / 2, 1066, 'Pull back, then let go', '#ffffff', 26);
+  }
+
+  /** The waiting planet sits on the orbit at the aim angle, drawn back by the pull. */
   updateHeld() {
     const h = this.held;
     if (!h) return;
     const a = this.aimAngle - this.worldRot;
-    h.x = CX + Math.cos(a) * R_LAUNCH;
-    h.y = CY + Math.sin(a) * R_LAUNCH;
+    const pw = this.aiming ? this.power : 0;
+    const rr = R_LAUNCH + pw * PULL_BACK;
+    h.x = CX + Math.cos(a) * rr;
+    h.y = CY + Math.sin(a) * rr;
     h.tailAngle = a + Math.PI;
+    if (pw > 0) {
+      // stretched along the pull like a drawn slingshot
+      const tq = -pw * 0.2;
+      h.qx += (tq * Math.cos(2 * a) - h.qx) * 0.3;
+      h.qy += (tq * Math.sin(2 * a) - h.qy) * 0.3;
+    }
   }
 
   drawAim() {
+    const g = this.aimGfx;
+    const band = this.bandGfx;
+    g.clear();
+    band.clear();
     const h = this.held;
-    if (!h || !this.aiming || this.aimCancel || this.state !== 'aim') {
+    if (!h || !this.aiming || this.power <= 0 || this.state !== 'aim') {
       for (const d of this.dots) d.setVisible(false);
       return;
     }
-    // how far the planet travels before it touches something
-    const dirX = (CX - h.x) / R_LAUNCH;
-    const dirY = (CY - h.y) / R_LAUNCH;
-    let reach = R_LAUNCH - 14;
+    const pw = this.power;
+    const ux = Math.cos(this.aimAngle);
+    const uy = Math.sin(this.aimAngle);
+    const hp = this.toScreen(h.x, h.y);
+
+    // rubber band from the orbit to the planet
+    band.lineStyle(7 - 4 * pw, 0xbfe9ff, 0.5);
+    for (const s of [-1, 1]) {
+      const a = this.aimAngle + s * 0.17;
+      band.lineBetween(CX + Math.cos(a) * (R_LAUNCH - 2), CY + Math.sin(a) * (R_LAUNCH - 2), hp.x, hp.y);
+    }
+
+    // where it will first touch something (field coordinates)
+    const fdx = CX - h.x;
+    const fdy = CY - h.y;
+    const dist = Math.hypot(fdx, fdy) || 1;
+    const dirX = fdx / dist;
+    const dirY = fdy / dist;
+    let reach = dist - 6;
+    let first = null;
     for (const p of this.pieces) {
       const ox = p.x - h.x;
       const oy = p.y - h.y;
@@ -377,37 +487,70 @@ export class GameScene extends Phaser.Scene {
       const rr = (p.r + h.r) * 0.94;
       const perp2 = ox * ox + oy * oy - along * along;
       if (perp2 >= rr * rr) continue;
-      reach = Math.min(reach, along - Math.sqrt(rr * rr - perp2));
+      const hit = along - Math.sqrt(rr * rr - perp2);
+      if (hit < reach) {
+        reach = hit;
+        first = p;
+      }
     }
-    const sx = CX + Math.cos(this.aimAngle) * R_LAUNCH;
-    const sy = CY + Math.sin(this.aimAngle) * R_LAUNCH;
-    const ux = -Math.cos(this.aimAngle);
-    const uy = -Math.sin(this.aimAngle);
+
+    // a comet shows what it will upgrade, or that the target is too big
+    let dotColor = 0xffffff;
+    if (h.kind === 'comet' && first && first.tier >= 0) {
+      const blocked = first.tier >= this.fieldMaxTier();
+      const at = this.toScreen(first.x, first.y);
+      const color = blocked ? 0xff5d73 : 0x7fe3ff;
+      g.lineStyle(5, color, 0.95);
+      g.strokeCircle(at.x, at.y, first.rv + 8);
+      if (blocked) dotColor = 0xff5d73;
+    }
+
     let i = 0;
     for (let t = h.r + 16; t < reach && i < this.dots.length; t += 24) {
-      this.dots[i].setVisible(true).setPosition(sx + ux * t, sy + uy * t).setScale((0.7 - i * 0.025) / TEX_SCALE).setAlpha(0.85 - i * 0.05);
+      this.dots[i]
+        .setVisible(true)
+        .setTint(dotColor)
+        .setPosition(hp.x - ux * t, hp.y - uy * t)
+        .setScale((0.7 - i * 0.025) / TEX_SCALE)
+        .setAlpha(0.85 - i * 0.05);
       i++;
     }
     for (; i < this.dots.length; i++) this.dots[i].setVisible(false);
+
+    // power gauge around the planet
+    const pr = h.r * h.pop + 13;
+    g.lineStyle(7, 0xffffff, 0.14);
+    g.strokeCircle(hp.x, hp.y, pr);
+    g.lineStyle(7, powerColor(pw), 1);
+    g.beginPath();
+    g.arc(hp.x, hp.y, pr, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * pw, false);
+    g.strokePath();
   }
 
   fire() {
-    if (this.state !== 'aim' || !this.held) return;
+    if (this.state !== 'aim' || !this.held || this.power <= 0) return;
     const b = this.held;
+    const power = this.power;
     this.held = null;
+    this.setPower(0);
     b.addBody();
-    const dx = (CX - b.x) / R_LAUNCH;
-    const dy = (CY - b.y) / R_LAUNCH;
-    this.matter.body.setVelocity(b.body, { x: dx * LAUNCH_SPEED, y: dy * LAUNCH_SPEED });
+    const dx = CX - b.x;
+    const dy = CY - b.y;
+    const d = Math.hypot(dx, dy) || 1;
+    const speed = MIN_SPEED + (MAX_SPEED - MIN_SPEED) * Math.pow(power, 1.2);
+    this.matter.body.setVelocity(b.body, { x: (dx / d) * speed, y: (dy / d) * speed });
+    b.body.frictionAir = FLIGHT_DRAG; // no drag in flight, so the power you pull is the power that lands
+    b.flying = true;
     b.born = this.time.now;
-    b.fresh = true;
-    b.impulse(Math.atan2(dy, dx) + Math.PI / 2, 0.22);
+    b.impulse(Math.atan2(dy, dx), -0.1 - power * 0.25); // the released slingshot stretches it along the flight
+    if (b.kind === 'comet') this.cometUses++;
     if (b.tier > this.biggest) this.biggest = b.tier;
     this.pieces.push(b);
     this.state = 'flying';
     this.nextHeldAt = this.time.now + SHOT_COOLDOWN;
-    Sfx.shoot(0.5);
-    Haptics.light();
+    Sfx.shoot(power);
+    if (power > 0.75) Haptics.medium();
+    else Haptics.light();
     if (this.hint) {
       this.hint.destroy();
       this.hint = null;
@@ -425,7 +568,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   async useBomb() {
-    if (this.state !== 'aim' || !this.held || this.held.kind === 'bomb') return;
+    if (this.state !== 'aim' || !this.held || this.held.kind === 'bomb' || this.aiming) return;
     if (this.bombs <= 0) {
       if (await this.rewarded()) this.bombs++;
       this.bombBtn.setCount(this.bombs);
@@ -458,8 +601,8 @@ export class GameScene extends Phaser.Scene {
       const dx = p.x - CX;
       const dy = p.y - CY;
       const d = Math.hypot(dx, dy) || 1;
-      const out = Phaser.Math.FloatBetween(7, 11);
-      const side = Phaser.Math.FloatBetween(-6, 6);
+      const out = Phaser.Math.FloatBetween(4, 7);
+      const side = Phaser.Math.FloatBetween(-4, 4);
       const v = p.body.velocity;
       this.matter.body.setVelocity(p.body, { x: v.x + (dx / d) * out - (dy / d) * side, y: v.y + (dy / d) * out + (dx / d) * side });
       p.impulse(Math.atan2(dy, dx), 0.24);
@@ -477,9 +620,12 @@ export class GameScene extends Phaser.Scene {
   physicsStep() {
     const list = this.pieces;
     const n = list.length;
+    const crunch = this.state === 'crunch';
     const g = GRAVITY * this.gravScale;
-    const swirl = this.state === 'crunch' ? 0.45 : 0;
+    const swirl = crunch ? 0.45 : 0;
+    let maxTier = -1;
     for (const p of list) {
+      if (p.tier > maxTier) maxTier = p.tier;
       const b = p.body;
       const dx = this.gravX - b.position.x;
       const dy = this.gravY - b.position.y;
@@ -488,9 +634,32 @@ export class GameScene extends Phaser.Scene {
       b.force.x += (dx - dy * swirl) * f;
       b.force.y += (dy + dx * swirl) * f;
     }
+    this.maxTier = maxTier;
 
     const previous = this.contacts;
     const contacts = new Set();
+
+    // a planet that reaches the centre without touching anything is caught by the well
+    // and eases to rest there, instead of flying straight through and out the other side
+    for (const p of list) {
+      const b = p.body;
+      const dx = b.position.x - CX;
+      const dy = b.position.y - CY;
+      if (p.flying && !crunch && dx * dx + dy * dy < CAPTURE_R * CAPTURE_R) {
+        const speed = Math.hypot(b.velocity.x, b.velocity.y);
+        p.captured = CAPTURE_STEPS;
+        p.squash(Math.atan2(b.velocity.y, b.velocity.x), Math.min(MAX_SQUASH, speed * IMPACT_SQUASH * 2));
+        this.land(p, speed);
+      }
+      if (p.captured > 0) {
+        p.captured--;
+        const ax = -0.04 * dx - 0.4 * b.velocity.x; // critically damped: no overshoot back and forth
+        const ay = -0.04 * dy - 0.4 * b.velocity.y;
+        b.force.x += (b.mass * ax) / STEP2;
+        b.force.y += (b.mass * ay) / STEP2;
+      }
+    }
+
     for (let i = 0; i < n; i++) {
       const A = list[i];
       const a = A.body;
@@ -510,7 +679,15 @@ export class GameScene extends Phaser.Scene {
 
         const key = A.id < B.id ? A.id * 65536 + B.id : B.id * 65536 + A.id;
         contacts.add(key);
-        if (!previous.has(key)) this.onTouch(A, B, nx, ny, -vn);
+        if (!previous.has(key)) {
+          this.onTouch(A, B, nx, ny, -vn);
+        } else if (-vn > RIPPLE_MIN) {
+          // planets already touching get pressed by the impact too, so it ripples through the cluster
+          const k = ((-vn - RIPPLE_MIN) * 0.004) / (a.mass + b.mass);
+          const ang = Math.atan2(ny, nx);
+          A.impulse(ang, k * b.mass);
+          B.impulse(ang, k * a.mass);
+        }
 
         // springy skin: pushes back harder the deeper it is pressed
         const reduced = (a.mass * b.mass) / (a.mass + b.mass);
@@ -536,28 +713,51 @@ export class GameScene extends Phaser.Scene {
     this.matter.world.step(STEP);
   }
 
+  /**
+   * First contact between two planets. Both squash, split by weight:
+   * a light planet hitting a heavy one squashes a lot and barely dents it, and the other way round.
+   */
   onTouch(A, B, nx, ny, closing) {
-    if (closing > 1.2) {
-      // the lighter body takes more of the squash
-      const amount = closing * 0.017;
+    if (closing > 1) {
+      const mA = A.body.mass;
+      const mB = B.body.mass;
+      const base = (closing * IMPACT_SQUASH * 2) / (mA + mB);
       const ang = Math.atan2(ny, nx);
-      const total = A.body.mass + B.body.mass;
-      A.impulse(ang, Math.min(0.3, (amount * 2 * B.body.mass) / total));
-      B.impulse(ang, Math.min(0.3, (amount * 2 * A.body.mass) / total));
+      A.squash(ang, Math.min(MAX_SQUASH, base * mB));
+      B.squash(ang, Math.min(MAX_SQUASH, base * mA));
     }
-    for (const p of [A, B]) {
-      if (!p.fresh) continue;
-      p.fresh = false;
-      if (closing > 2) {
-        Sfx.land(closing);
-        if (closing > 8) Haptics.light();
-      }
-    }
+    for (const p of [A, B]) if (p.flying) this.land(p, closing);
+  }
+
+  /** A launched planet's first contact: normal drag from now on, and feedback that scales with the hit. */
+  land(p, closing) {
+    p.flying = false;
+    if (p.body) p.body.frictionAir = DRAG;
+    if (closing <= 2) return;
+    Sfx.land(closing);
+    if (closing > 18) {
+      Haptics.heavy();
+      this.cameras.main.shake(90, 0.002 + closing * 0.0001);
+    } else if (closing > 9) Haptics.medium();
+    else Haptics.light();
   }
 
   specialHit(s, other) {
     if (s.used || other.tier < 0) return;
-    if (s.kind === 'comet' && !other.merging) {
+    if (s.kind === 'comet') {
+      if (other.merging) return;
+      if (other.tier >= this.maxTier) {
+        // comets can't push your biggest planet any further; it just bounces off
+        const now = this.time.now;
+        if (now - (s.blockedAt ?? -1e9) > 700) {
+          s.blockedAt = now;
+          const at = this.toScreen((s.body.position.x + other.body.position.x) / 2, (s.body.position.y + other.body.position.y) / 2);
+          this.floatText(at.x, at.y, 'TOO BIG', '#ff9a9a');
+          Sfx.bonk();
+          Haptics.light();
+        }
+        return;
+      }
       s.used = other.merging = true;
       this.cometQueue.push([s, other]);
     } else if (s.kind === 'bomb') {
@@ -680,7 +880,7 @@ export class GameScene extends Phaser.Scene {
     const at = this.toScreen(x, y);
     const flash = this.add.image(at.x, at.y, 'soft').setTint(0xffd9a0).setScale(1 / TEX_SCALE).setDepth(FX).setBlendMode(Phaser.BlendModes.ADD);
     this.tweens.add({ targets: flash, scale: 7 / TEX_SCALE, alpha: 0, duration: 420, ease: 'Cubic.out', onComplete: () => flash.destroy() });
-    this.shockwave(x, y, 280, 7);
+    this.shockwave(x, y, 280, 6);
     this.cameras.main.shake(260, 0.014);
     Sfx.boom();
     Haptics.success();
@@ -689,7 +889,7 @@ export class GameScene extends Phaser.Scene {
   addEnergy(n) {
     if (this.cometPending) return;
     this.energy += n;
-    if (this.energy >= COMET_COST) {
+    if (this.energy >= this.cometCost()) {
       this.cometPending = true;
       Sfx.star();
       Haptics.medium();
@@ -723,9 +923,11 @@ export class GameScene extends Phaser.Scene {
     this.nextSwallowAt = now + 900; // a beat to take in what just appeared
     this.swallowed = 0;
     this.aiming = false;
+    this.setPower(0);
     this.gravX = x;
     this.gravY = y;
     this.gravScale = 2.6;
+    this.tweens.add({ targets: this.coreParts, alpha: 0.15, duration: 400 });
     if (!this.discover(HOLE)) this.banner('BLACK HOLE!', 'Everything falls in…', '#ffb347');
     this.cameras.main.shake(500, 0.012);
     Sfx.boom();
@@ -776,6 +978,7 @@ export class GameScene extends Phaser.Scene {
     this.gravX = CX;
     this.gravY = CY;
     this.gravScale = 1;
+    this.tweens.add({ targets: this.coreParts, alpha: 1, duration: 600 });
     this.universe++;
     this.addScore(1000 * (this.universe - 1));
     this.universeText.setText(`UNIVERSE ${this.universe}  ·  SCORE ×${this.universe}`);
@@ -836,19 +1039,25 @@ export class GameScene extends Phaser.Scene {
   /** A card that drops in under the top bar, so it never hides the centre of the field. */
   banner(title, subtitle, color, kind = null) {
     const y = 270;
+    const hasPic = kind !== null;
+    const picW = hasPic ? 110 : 0;
+    const t1 = this.add.text(0, -26, title, { fontFamily: FONT, fontSize: 34, color, fontStyle: 'bold' }).setOrigin(0.5).setResolution(TEX_SCALE);
+    const t2 = this.add.text(0, 22, subtitle, { fontFamily: FONT, fontSize: 24, color: '#ffffff', fontStyle: 'bold' }).setOrigin(0.5).setResolution(TEX_SCALE);
+    const w = Phaser.Math.Clamp(Math.max(t1.width, t2.width) + 70 + picW, 460, 680);
+    const tx = picW / 2;
+    t1.x = tx;
+    t2.x = tx;
     const bg = this.add.graphics();
     bg.fillStyle(0x0b0524, 0.9);
-    bg.fillRoundedRect(-240, -70, 480, 140, 28);
+    bg.fillRoundedRect(-w / 2, -70, w, 140, 28);
     bg.lineStyle(4, Phaser.Display.Color.HexStringToColor(color).color, 0.9);
-    bg.strokeRoundedRect(-240, -70, 480, 140, 28);
+    bg.strokeRoundedRect(-w / 2, -70, w, 140, 28);
     const items = [bg];
-    const tx = kind === null ? 0 : 50;
-    if (kind !== null) items.push(this.portrait(-160, 0, kind, 40));
-    items.push(this.add.text(tx, -26, title, { fontFamily: FONT, fontSize: 34, color, fontStyle: 'bold' }).setOrigin(0.5).setResolution(TEX_SCALE));
-    items.push(this.add.text(tx, 22, subtitle, { fontFamily: FONT, fontSize: 24, color: '#ffffff', fontStyle: 'bold' }).setOrigin(0.5).setResolution(TEX_SCALE));
+    if (hasPic) items.push(this.portrait(-w / 2 + 64, 0, kind, 40));
+    items.push(t1, t2);
     const c = this.add.container(W / 2, y - 60, items).setDepth(60).setAlpha(0);
     this.tweens.add({ targets: c, y, alpha: 1, duration: 260, ease: 'Back.out' });
-    this.tweens.add({ targets: c, alpha: 0, y: y - 40, delay: 1700, duration: 300, onComplete: () => c.destroy() });
+    this.tweens.add({ targets: c, alpha: 0, y: y - 40, delay: 1900, duration: 300, onComplete: () => c.destroy() });
   }
 
   showDiscovery(tier) {
@@ -910,9 +1119,10 @@ export class GameScene extends Phaser.Scene {
     let worst = 0;
     for (const p of [...this.pieces]) {
       const age = now - p.born;
+      if (p.flying && age > 1800) this.land(p, 0);
       if (p.tier < 0) {
         // a special that never found a target fizzles out
-        if (age > 4000 && !p.used) {
+        if (age > 5000 && !p.used) {
           if (p.kind === 'bomb') this.explode(p);
           else {
             this.mergeFx(p.x, p.y, 0, 0);
@@ -922,8 +1132,9 @@ export class GameScene extends Phaser.Scene {
         continue;
       }
       const reach = Math.hypot(p.x - CX, p.y - CY) + p.r;
-      if (age > SETTLE_MS && reach > R_LIMIT) p.dangerMs += delta;
-      else p.dangerMs = 0;
+      const v = p.body.velocity;
+      if (age < SETTLE_MS || reach <= R_LIMIT) p.dangerMs = 0;
+      else if (Math.hypot(v.x, v.y) < SETTLED_SPEED) p.dangerMs += delta; // knocked-out planets get time to fall back
       if (p.dangerMs > worst) worst = p.dangerMs;
     }
     const danger = worst > 0;
@@ -952,7 +1163,9 @@ export class GameScene extends Phaser.Scene {
         if (d >= sum || d < 0.001) continue;
         const nx = dx / d;
         const ny = dy / d;
-        const da = (d * ra) / sum;
+        // the lighter planet gives way: it takes the larger share of the dent
+        const share = b.w / (a.w + b.w);
+        const da = ra - (sum - d) * share;
         a.planes.push(nx, ny, da);
         b.planes.push(-nx, -ny, d - da);
       }
@@ -990,6 +1203,7 @@ export class GameScene extends Phaser.Scene {
   gameOver() {
     this.state = 'over';
     this.aiming = false;
+    this.setPower(0);
     Sfx.gameOver();
     Haptics.heavy();
     this.showGameOver();
@@ -1107,6 +1321,7 @@ export class GameScene extends Phaser.Scene {
     const pausedAt = this.time.now;
     this.state = 'paused';
     this.aiming = false;
+    this.setPower(0);
     Sfx.click();
     const items = this.panel(50, 170, W - 100, 940);
     const add = (o) => {

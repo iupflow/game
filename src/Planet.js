@@ -9,6 +9,12 @@ import { TEX_SCALE, defOf, surfaceKey, partKey, partInfo } from './art.js';
 //    drawn on a mesh whose inside lags behind and sloshes, so the whole body wobbles.
 
 export const CORE = 0.8;
+// drawn slightly larger than the physical skin, so touching planets always press into each other a little
+const VISUAL = 1.04;
+export const DRAG = 0.022; // air drag once a planet has landed
+// The squash spring peaks at about 1.93x the velocity it is kicked with.
+export const SQUASH_GAIN = 1 / 1.93;
+const MAX_Q = 0.46;
 const TAU = Math.PI * 2;
 let nextId = 1;
 
@@ -63,8 +69,8 @@ export class Planet {
 
     this.K = Phaser.Math.Clamp(Math.round(this.r / 1.5), 24, 64);
     this.t = table(this.K);
-    this.radii = new Float32Array(this.K).fill(this.r * this.pop);
-    this.inner = new Float32Array(this.K).fill(this.r * this.pop);
+    this.radii = new Float32Array(this.K).fill(this.r * VISUAL * this.pop);
+    this.inner = new Float32Array(this.K).fill(this.r * VISUAL * this.pop);
     this.tmp = new Float32Array(this.K);
     this.tmp2 = new Float32Array(this.K);
 
@@ -72,7 +78,8 @@ export class Planet {
     this.dangerMs = 0;
     this.merging = false;
     this.used = false;
-    this.fresh = false;
+    this.flying = false;
+    this.captured = 0;
 
     this.frame = scene.textures.getFrame(surfaceKey(kind));
     this.lightFrame = this.def.light ? scene.textures.getFrame('light_' + this.def.light) : null;
@@ -87,17 +94,19 @@ export class Planet {
   }
 
   get rv() {
-    return this.r * this.pop;
+    return this.r * VISUAL * this.pop;
   }
 
   addBody() {
     this.body = this.scene.matter.add.circle(this.x, this.y, this.r * CORE, {
-      restitution: 0.25,
+      restitution: 0.12,
       friction: 0.25,
-      frictionAir: 0.03,
+      frictionAir: DRAG,
       density: 0.001,
     });
     this.body.planet = this;
+    // how hard this planet presses into others: heavier planets dent lighter ones more
+    this.w = Math.pow(this.body.mass, 0.6);
     this.prevAngle = 0;
     return this.body;
   }
@@ -109,7 +118,12 @@ export class Planet {
     this.body = null;
   }
 
-  /** Squash along the given direction; the spring then makes it wobble. */
+  /** Squash so that the wobble peaks at about `peak` (a fraction of the radius) along `angle`. */
+  squash(angle, peak) {
+    this.impulse(angle, peak * SQUASH_GAIN);
+  }
+
+  /** Kick the squash spring along the given direction; it then wobbles. */
   impulse(angle, amount) {
     this.qvx += amount * Math.cos(2 * angle);
     this.qvy += amount * Math.sin(2 * angle);
@@ -131,6 +145,14 @@ export class Planet {
     this.qvy += (-0.17 * this.qy - 0.13 * this.qvy) * dt;
     this.qx += this.qvx * dt;
     this.qy += this.qvy * dt;
+    const qs = Math.hypot(this.qx, this.qy);
+    if (qs > MAX_Q) {
+      // fully squashed: stop there rather than staying pinned at the limit
+      this.qx *= MAX_Q / qs;
+      this.qy *= MAX_Q / qs;
+      this.qvx *= 0.5;
+      this.qvy *= 0.5;
+    }
     this.pv += ((this.popTarget - this.pop) * 0.2 - this.pv * 0.22) * dt;
     this.pop = Math.max(0.02, this.pop + this.pv * dt);
 
@@ -152,9 +174,9 @@ export class Planet {
       }
     }
     const qm = Math.hypot(Qx, Qy);
-    if (qm > 0.34) {
-      Qx *= 0.34 / qm;
-      Qy *= 0.34 / qm;
+    if (qm > 0.42) {
+      Qx *= 0.42 / qm;
+      Qy *= 0.42 / qm;
     }
 
     // the inside lags behind sudden changes of speed, then sloshes back
@@ -229,7 +251,7 @@ export class Planet {
   }
 
   place(now) {
-    const s = this.pop / TEX_SCALE;
+    const s = (VISUAL * this.pop) / TEX_SCALE;
     const lx = this.x - this.scene.CX;
     const ly = this.y - this.scene.CY;
     for (const { img, spin } of this.parts) {
