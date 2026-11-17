@@ -55,6 +55,9 @@ npm run build    # production build in dist/
   surface deforms, not only the outline
 - A planet that reaches the centre without touching anything is caught by the well
   and eases to rest there
+- Merges: the two planets rush into each other, light bursts out in the new body's colour,
+  a sharp white ring and a soft coloured ring run out and sparks fly. From Earth up, light
+  rays turn and fade too. All of it grows with the size of the new body and with the combo
 - Album: only bodies already found are shown. Nothing about the rest is given away, not
   even that there is more
 - The ring grows with the biggest body made so far. Its size is exactly what the next step

@@ -1929,6 +1929,7 @@ export class GameScene extends Phaser.Scene {
       const x = (a.x + b.x) / 2;
       const y = (a.y + b.y) / 2;
       const tier = a.tier;
+      const pair = [a, b].map((p) => ({ x: p.x, y: p.y, rv: p.rv, kind: p.kind }));
       this.removePiece(a);
       this.removePiece(b);
       this.combo = now - this.lastMergeAt < 1300 ? this.combo + 1 : 1;
@@ -1936,7 +1937,7 @@ export class GameScene extends Phaser.Scene {
       const { shown, points } = this.evolve(x, y, tier);
       const total = points * this.combo * this.universe;
       this.addScore(total);
-      this.mergeFx(x, y, shown, total);
+      this.mergeFx(x, y, shown, total, pair);
       this.shockwave(x, y, TIERS[shown].r + 70, 1.8 + shown * 0.2);
       Sfx.merge(tier, this.combo);
       Haptics.merge(tier + 1);
@@ -2052,33 +2053,98 @@ export class GameScene extends Phaser.Scene {
 
   // ---------- effects ----------
 
-  mergeFx(wx, wy, tier, points) {
+  /**
+   * A merge. The two planets rush into each other, light bursts out in the new body's colour,
+   * a sharp ring and a soft ring run out, sparks fly, and from Earth up light rays turn and fade.
+   * All of it grows with the size of the new body and with the combo.
+   * pair: where the two merging planets were, if this was a merge of two.
+   */
+  mergeFx(wx, wy, tier, points, pair = null) {
     const { x, y } = this.toScreen(wx, wy);
     const t = TIERS[tier];
-    const rs = t.r * this.fieldScale;
-    const ring = this.add.circle(x, y, rs, 0xffffff, 0).setStrokeStyle(6, 0xffffff, 0.9).setDepth(FX);
-    this.tweens.add({ targets: ring, scale: 1.8, alpha: 0, duration: 320, ease: 'Cubic.out', onComplete: () => ring.destroy() });
-    const n = 7 + tier;
+    const s = this.fieldScale;
+    const rs = t.r * s;
+    const color = t.color;
+    const light = mix(color, 0xffffff, 0.55);
+    const big = Math.min(1, tier / 12); // 0 for the Moon, 1 from the Supernova on
+    const boost = Math.min(3, Math.max(0, (this.combo || 1) - 1));
+    const ADD = Phaser.BlendModes.ADD;
+
+    if (pair) {
+      for (const p of pair) {
+        const at = this.toScreen(p.x, p.y);
+        const ghost = this.add.image(at.x, at.y, portraitKey(p.kind)).setScale((p.rv * s) / PORTRAIT_R / TEX_SCALE).setDepth(FX - 1);
+        this.tweens.add({ targets: ghost, x, y, scale: ghost.scale * 0.55, alpha: 0, duration: 150, ease: 'Quad.in', onComplete: () => ghost.destroy() });
+      }
+    }
+
+    const bloom = this.add.image(x, y, 'soft').setTint(light).setBlendMode(ADD).setDepth(FX).setScale((rs * 0.8) / 64 / TEX_SCALE);
+    this.tweens.add({
+      targets: bloom,
+      props: { scale: { value: (rs * (2.2 + big)) / 64 / TEX_SCALE, ease: 'Cubic.out' }, alpha: { value: 0, ease: 'Quad.in' } },
+      duration: 450 + big * 350,
+      onComplete: () => bloom.destroy(),
+    });
+
+    for (const [width, tint, alpha, grow, ms] of [[5, 0xffffff, 0.95, 1.9, 380], [14, color, 0.5, 2.6 + big, 600 + big * 300]]) {
+      const ring = this.add.circle(x, y, rs).setStrokeStyle(width, tint, alpha).setDepth(FX).setBlendMode(ADD);
+      this.tweens.add({
+        targets: ring,
+        props: { radius: { value: rs * grow, ease: 'Cubic.out' }, alpha: { value: 0, ease: 'Quad.in' } },
+        duration: ms,
+        onComplete: () => ring.destroy(),
+      });
+    }
+
+    const n = 10 + tier * 2 + boost * 6;
     for (let i = 0; i < n; i++) {
-      const ang = (i / n) * Math.PI * 2 + Math.random() * 0.5;
+      const ang = (i / n) * Math.PI * 2 + Math.random() * 0.4;
+      const star = i % 3 === 0;
       const d = this.add
-        .image(x, y, i % 3 ? 'dot' : 'spark')
-        .setTint(i % 2 ? t.color : 0xffffff)
-        .setScale((0.5 + Math.random() * 0.7) / TEX_SCALE)
-        .setDepth(FX);
-      const dist = rs + 30 + Math.random() * 60;
+        .image(x + Math.cos(ang) * rs * 0.6, y + Math.sin(ang) * rs * 0.6, star ? 'spark' : 'dot')
+        .setTint(i % 2 ? color : light)
+        .setScale(((star ? 0.7 : 0.55) + Math.random() * 0.5) / TEX_SCALE)
+        .setDepth(FX)
+        .setBlendMode(ADD);
+      const dist = rs + 34 + Math.random() * (50 + big * 70);
       this.tweens.add({
         targets: d,
-        x: x + Math.cos(ang) * dist,
-        y: y + Math.sin(ang) * dist,
-        alpha: 0,
-        scale: 0.1 / TEX_SCALE,
-        angle: 180,
-        duration: 380 + Math.random() * 240,
-        ease: 'Cubic.out',
+        props: {
+          x: { value: x + Math.cos(ang) * dist, ease: 'Cubic.out' },
+          y: { value: y + Math.sin(ang) * dist, ease: 'Cubic.out' },
+          alpha: { value: 0, ease: 'Quad.in' },
+          scale: { value: 0.12 / TEX_SCALE, ease: 'Quad.in' },
+          angle: { value: 220, ease: 'Linear' },
+        },
+        duration: 520 + Math.random() * 300 + big * 300,
         onComplete: () => d.destroy(),
       });
     }
+
+    if (tier >= 4) {
+      const rays = this.add.graphics().setPosition(x, y).setDepth(FX).setBlendMode(ADD);
+      const k = 8 + Math.round(big * 6);
+      const inner = rs * 0.5;
+      const len = rs * (1.8 + big);
+      for (let i = 0; i < k; i++) {
+        const a = (i / k) * Math.PI * 2;
+        rays.fillStyle(i % 2 ? light : 0xffffff, 0.5);
+        rays.beginPath();
+        rays.moveTo(Math.cos(a - 0.09) * inner, Math.sin(a - 0.09) * inner);
+        rays.lineTo(Math.cos(a) * len, Math.sin(a) * len);
+        rays.lineTo(Math.cos(a + 0.09) * inner, Math.sin(a + 0.09) * inner);
+        rays.closePath();
+        rays.fillPath();
+      }
+      rays.setScale(0.6).setAlpha(0.9);
+      this.tweens.add({
+        targets: rays,
+        props: { scale: { value: 1.25, ease: 'Cubic.out' }, rotation: { value: 0.5, ease: 'Cubic.out' }, alpha: { value: 0, ease: 'Quad.in' } },
+        duration: 650 + big * 350,
+        onComplete: () => rays.destroy(),
+      });
+    }
+
     if (points > 0) {
       const label = this.text(x, y, '+' + Math.round(points), 26 + tier * 2).setOrigin(0.5).setDepth(FX + 1).setStroke('#150a33', 6);
       this.tweens.add({ targets: label, y: y - 70, alpha: 0, duration: 750, ease: 'Cubic.out', onComplete: () => label.destroy() });
