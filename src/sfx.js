@@ -52,6 +52,10 @@ export const Sfx = {
     tone(120, 0.45, 'sawtooth', 0.2, 30);
     tone(60, 0.5, 'sine', 0.25, 25);
   },
+  swallow(n) {
+    const f = 180 * Math.pow(1.06, Math.min(n, 30));
+    tone(f * 2, 0.18, 'sine', 0.12, f);
+  },
   shake() {
     tone(90, 0.3, 'triangle', 0.16, 60);
   },

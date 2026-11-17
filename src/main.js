@@ -4,9 +4,9 @@ import { TEX_SCALE, TIERS } from './art.js';
 
 // The world is W x H units; the canvas is rendered at up to 2x so it stays sharp on phones.
 const game = new Phaser.Game({
-  type: Phaser.AUTO,
+  type: Phaser.WEBGL, // planets are drawn as deforming meshes, which needs WebGL
   parent: 'game',
-  backgroundColor: '#12082b',
+  backgroundColor: '#05030f',
   scale: {
     mode: Phaser.Scale.FIT,
     autoCenter: Phaser.Scale.CENTER_BOTH,
@@ -16,7 +16,7 @@ const game = new Phaser.Game({
   physics: {
     default: 'matter',
     matter: {
-      gravity: { y: 1.4 },
+      gravity: { x: 0, y: 0 }, // gravity is radial and applied by the scene
       positionIterations: 10,
       velocityIterations: 8,
       autoUpdate: false, // stepped at a fixed rate from the scene
