@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Jelly Drop</string>
+    <string name="title_activity_main">Jelly Drop</string>
+    <string name="package_name">com.iupflow.jellydrop</string>
+    <string name="custom_url_scheme">com.iupflow.jellydrop</string>
+</resources>

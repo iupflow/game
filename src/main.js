@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
 import { GameScene, W, H } from './GameScene.js';
 import { TEX_SCALE, TIERS } from './art.js';
+import { setupNative } from './native.js';
 
 // The world is W x H units; the canvas is rendered at up to 2x so it stays sharp on phones.
 const game = new Phaser.Game({
@@ -24,6 +25,8 @@ const game = new Phaser.Game({
   },
   scene: [GameScene],
 });
+
+setupNative();
 
 // hooks for automated tests
 window.__game = game;

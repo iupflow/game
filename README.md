@@ -21,6 +21,8 @@ npm run dev      # development server
 npm run build    # production build in dist/
 ```
 
+The iOS and Android apps are built with Capacitor; see [BUILD.md](BUILD.md).
+
 ## Structure
 
 - `src/GameScene.js` – gameplay: radial gravity, launching, merging, boosters, the
@@ -35,7 +37,11 @@ npm run build    # production build in dist/
   background
 - `src/ads.js` – ad and purchase layer. Uses placeholder overlays in the browser;
   replace the `platform` functions with real SDK calls for the store build
-- `src/haptics.js` – vibration (Capacitor Haptics in the store build, browser fallbacks)
+- `src/haptics.js` – vibration (Capacitor Haptics in the apps, browser fallbacks)
+- `src/native.js` – app-only glue: hides the status bar and launch screen, silences sound
+  in the background, sends the Android back button to the home screen
+- `android/`, `ios/` – the native app projects (Capacitor); `assets/` – icon and launch
+  screen sources
 - `src/sfx.js` – synthesized sound (Web Audio, no files). Every merge has its own kind of
   sound, not just its own pitch: a glassy ting for moons, a metal clink for Mercury, a gravel
   crunch for Mars, a cloudy breath for Venus, bubbles for Earth, an icy whistle for Neptune,

@@ -17,6 +17,7 @@ import {
 } from './art.js';
 import { Planet, CORE, DRAG } from './Planet.js';
 import { PlanetBatch } from './PlanetBatch.js';
+import { nativeReady } from './native.js';
 
 export const W = 720;
 export const H = 1280;
@@ -306,6 +307,7 @@ export class GameScene extends Phaser.Scene {
     };
     this.input.on('pointerup', release);
     this.input.on('pointerupoutside', release);
+    nativeReady();
   }
 
   // ---------- helpers ----------

@@ -1,5 +1,9 @@
 // Vibration feedback.
-// Store build: uses the Capacitor Haptics plugin (real Taptic Engine / vibrator).
+// Store build: the Capacitor Haptics plugin (real Taptic Engine / vibrator).
+import { Capacitor } from '@capacitor/core';
+import { Haptics as NativeHaptics } from '@capacitor/haptics';
+
+const NATIVE = Capacitor.isNativePlatform();
 // Android browsers: navigator.vibrate.
 // iOS Safari has no vibration API; toggling a hidden "switch" checkbox makes the
 // system play a light tick on recent iOS versions, so that is used as a fallback.
@@ -29,9 +33,8 @@ function fire(level) {
   if (now - last < 35) return;
   last = now;
   try {
-    const native = window.Capacitor?.Plugins?.Haptics;
-    if (native) {
-      native.impact({ style: NATIVE_STYLE[level] });
+    if (NATIVE) {
+      NativeHaptics.impact({ style: NATIVE_STYLE[level] }).catch(() => {});
     } else if (navigator.vibrate) {
       navigator.vibrate(VIBRATE_MS[level]);
     } else {

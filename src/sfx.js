@@ -6,8 +6,10 @@ let ac = null;
 let master = null;
 let reverb = null;
 let noiseBuf = null;
+let paused = false; // the app is in the background: no sound at all
 
 function audio() {
+  if (paused) return null;
   if (!ac) {
     const AC = window.AudioContext || window.webkitAudioContext;
     if (!AC) return null;
@@ -344,6 +346,17 @@ const MERGE = [
 ];
 
 export const Sfx = {
+  /** The app went to the background. */
+  pause() {
+    paused = true;
+    if (ac) ac.suspend();
+  },
+
+  resume() {
+    paused = false;
+    if (ac) ac.resume();
+  },
+
   /** power 0 is a tap: a soft drop instead of a launch. */
   shoot(power) {
     if (power <= 0) {

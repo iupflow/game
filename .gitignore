@@ -1,3 +1,11 @@
 node_modules
 dist
 .DS_Store
+android/app/build
+android/.gradle
+android/build
+android/local.properties
+ios/App/build
+ios/DerivedData
+*.keystore
+*.jks
