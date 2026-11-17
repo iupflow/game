@@ -189,27 +189,21 @@ function ellipseDist(P, c, a, b) {
   return Math.sqrt(u * u + v * v);
 }
 
-function makeCraters(seed, count, rMin, rMax, toView) {
+function makeCraters(seed, count, rMin, rMax) {
   const rnd = seeded(seed);
   const list = [];
   for (let i = 0; i < count; i++) {
     const lat = Math.asin(rnd() * 2 - 1);
     const lon = rnd() * TAU;
-    const r = rMin + (rMax - rMin) * Math.pow(rnd(), 2);
-    const d = dirOf(lat, lon);
-    const v = toView(d);
-    list.push([...d, r, v[0], v[1], v[2]]);
+    const r = rMin + (rMax - rMin) * Math.pow(rnd(), 1.5);
+    list.push([...dirOf(lat, lon), r]);
   }
   return list;
 }
 
 const WHITE = [255, 255, 255];
-const VIEW = [0, 0];
 
-/**
- * Bowl-shaped craters with a raised rim. The inner wall on the light's side is in shadow and
- * the far wall is lit, matching the scene light.
- */
+/** Soft craters: a gently darker bowl and a faint lighter rim, no hard edges. */
 function craters(list, P, out, strength) {
   for (let i = 0; i < list.length; i++) {
     const c = list[i];
@@ -217,231 +211,170 @@ function craters(list, P, out, strength) {
     const dy = P[1] - c[1];
     const dz = P[2] - c[2];
     const t = Math.sqrt(dx * dx + dy * dy + dz * dz) / c[3];
-    if (t > 1.45) continue;
-    const s = c[6] > 0 ? Math.max(-1, Math.min(1, ((VIEW[0] - c[4]) * LIGHT[0] + (VIEW[1] - c[5]) * LIGHT[1]) / c[3])) : 0;
-    if (t < 1) {
-      const bowl = 1 - t * t;
-      scaleRGB(out, Math.max(0.2, 1 - strength * (0.3 * bowl + 0.55 * s * Math.sqrt(bowl))));
-    }
-    const rim = Math.exp(-((t - 1) * (t - 1)) / 0.025);
-    mixTo(out, WHITE, strength * 0.28 * rim * (0.55 - 0.45 * s));
+    if (t > 1.5) continue;
+    if (t < 1) scaleRGB(out, 1 - strength * 0.5 * smooth(1, 0.35, t));
+    mixTo(out, WHITE, strength * 0.35 * Math.exp(-((t - 1.05) * (t - 1.05)) / 0.03));
   }
 }
 
 // ---------- planet surfaces ----------
-// Each factory returns a function (P, mu, out) => void, where P is the point on the unit
-// sphere in the planet's own frame, mu is how directly it faces the viewer (1 at the centre,
-// 0 at the edge) and out is [r, g, b, alpha 0..1]. Colours are albedo only; light comes later.
+// A soft, stylised look: gentle colours, a few large features, no fine noise.
+// Each factory returns (P, mu, out) => void: P is the point on the unit sphere in the planet's
+// own frame, mu is how directly it faces the viewer (1 at the centre, 0 at the edge) and
+// out is [r, g, b, alpha 0..1].
 
 const SURFACES = {
-  asteroid(toView) {
+  asteroid() {
     const n = makeNoise(11);
-    const m = makeNoise(12);
-    const list = makeCraters(13, 18, 0.08, 0.38, toView);
-    const col = ramp([[-0.7, 0x2b2621], [-0.2, 0x5a5047], [0.3, 0x8f8372], [0.8, 0xbdb09c]]);
+    const list = makeCraters(13, 7, 0.14, 0.36);
+    const col = ramp([[-0.6, 0x8c7e72], [0, 0xae9f8f], [0.6, 0xcdbfae]]);
     return (P, mu, out) => {
-      const h = fbm(n, P[0] * 3, P[1] * 3, P[2] * 3, 6) + 0.5 * fbm(m, P[0] * 13, P[1] * 13, P[2] * 13, 3);
-      col(h * 1.2, out);
-      craters(list, P, out, 0.7);
+      col(fbm(n, P[0] * 2, P[1] * 2, P[2] * 2, 3) * 1.4, out);
+      craters(list, P, out, 0.3);
     };
   },
 
-  moon(toView) {
+  moon() {
     const n = makeNoise(21);
     const m = makeNoise(22);
-    const list = makeCraters(23, 30, 0.04, 0.28, toView);
+    const list = makeCraters(23, 8, 0.1, 0.26);
+    const MARE = rgb(0xa9a6bf);
     return (P, mu, out) => {
-      const base = fbm(n, P[0] * 3, P[1] * 3, P[2] * 3, 5);
-      const maria = smooth(0.02, 0.24, fbm(m, P[0] * 1.4, P[1] * 1.4, P[2] * 1.4, 4));
-      const g = 196 + base * 46 - maria * 78;
-      out[0] = g;
-      out[1] = g * 0.985;
-      out[2] = g * 0.96;
-      craters(list, P, out, 0.32);
+      const g = fbm(n, P[0] * 2.2, P[1] * 2.2, P[2] * 2.2, 3);
+      out[0] = 222 + g * 26;
+      out[1] = 220 + g * 26;
+      out[2] = 234 + g * 18;
+      mixTo(out, MARE, smooth(0.04, 0.2, fbm(m, P[0] * 1.3, P[1] * 1.3, P[2] * 1.3, 3)) * 0.8);
+      craters(list, P, out, 0.25);
     };
   },
 
-  mars(toView) {
+  mars() {
     const n = makeNoise(31);
     const m = makeNoise(32);
     const q = makeNoise(33);
-    const list = makeCraters(34, 14, 0.03, 0.12, toView);
-    const col = ramp([[-0.6, 0x5a1d0e], [-0.2, 0x8f3517], [0.15, 0xbd5a2e], [0.5, 0xdc8a56], [0.8, 0xeab58c]]);
-    const CAP = [246, 240, 236];
+    const col = ramp([[-0.6, 0xd5603f], [0, 0xec8158], [0.6, 0xf6a37a]]);
+    const DARK = rgb(0xc2563d);
+    const CAP = rgb(0xfff6f0);
     return (P, mu, out) => {
       const lat = Math.asin(Math.max(-1, Math.min(1, -P[1])));
-      const h = fbm(n, P[0] * 2.6, P[1] * 2.6, P[2] * 2.6, 6);
-      const dark = smooth(0.04, 0.3, fbm(m, P[0] * 1.3, P[1] * 1.3, P[2] * 1.3, 4));
-      col(h * 0.9 - dark * 0.5, out);
-      // a long canyon system just south of the equator
-      const can = Math.abs(lat + 0.12 + 0.07 * fbm(q, P[0] * 3, P[1] * 3, P[2] * 3, 3));
-      const along = 1 - smooth(0.35, 0.8, Math.abs(P[0]));
-      if (P[2] > 0) scaleRGB(out, 1 - 0.3 * (1 - smooth(0.012, 0.07, can)) * along);
-      craters(list, P, out, 0.25);
-      const cap = smooth(1.1, 1.2, Math.abs(lat) + 0.06 * fbm(q, P[0] * 6, P[1] * 6, P[2] * 6, 3));
-      mixTo(out, CAP, cap);
+      col(fbm(n, P[0] * 2, P[1] * 2, P[2] * 2, 3) * 1.3, out);
+      mixTo(out, DARK, smooth(0.06, 0.24, fbm(m, P[0] * 1.4, P[1] * 1.4, P[2] * 1.4, 3)) * 0.75);
+      mixTo(out, CAP, smooth(1.12, 1.2, Math.abs(lat) + 0.05 * fbm(q, P[0] * 4, P[1] * 4, P[2] * 4, 2)));
     };
   },
 
   venus() {
     const n = makeNoise(41);
     const w = makeNoise(42);
-    const col = ramp([[-0.7, 0xa8692f], [-0.25, 0xcf9a55], [0.15, 0xe8c58b], [0.55, 0xf7e6c2], [0.9, 0xfff6e2]]);
+    const col = ramp([[-0.8, 0xeeb867], [-0.2, 0xf6cf8a], [0.3, 0xfadfa8], [0.8, 0xfdeccb]]);
     return (P, mu, out) => {
       const lat = Math.asin(Math.max(-1, Math.min(1, -P[1])));
-      const wx = fbm(w, P[0] * 1.6, P[1] * 1.6, P[2] * 1.6, 3);
-      // thick cloud deck: broad sideways streams with a chevron pattern
-      const v = 0.5 * Math.sin(lat * 6 + Math.abs(lat) * 3 + 2.6 * wx) + 0.55 * fbm(n, P[0] * 3.4 + wx, P[1] * 3.4, P[2] * 3.4, 4);
-      col(v, out);
+      const wx = fbm(w, P[0] * 1.4, P[1] * 1.4, P[2] * 1.4, 2);
+      col(0.5 * Math.sin(lat * 5 + 2.2 * wx) + 0.35 * fbm(n, P[0] * 2.4, P[1] * 2.4, P[2] * 2.4, 2), out);
     };
   },
 
   earth() {
     const land = makeNoise(51);
-    const wet = makeNoise(52);
+    const tone = makeNoise(52);
     const cloud = makeNoise(53);
     const warp = makeNoise(54);
-    const ocean = ramp([[0, 0x2a8bd6], [0.12, 0x165fb0], [0.4, 0x0b3a7e]]);
-    const DESERT = rgb(0xc9a768);
-    const FOREST = rgb(0x2f6b2c);
-    const GRASS = rgb(0x6d9442);
-    const TUNDRA = rgb(0x8d8f78);
-    const ROCK = rgb(0x7a6a58);
-    const ICE = rgb(0xf0f6fa);
+    const ocean = ramp([[0, 0x4aa8f7], [0.1, 0x3a8eec], [0.35, 0x2f74da]]);
+    const GREEN = rgb(0x5fc86b);
+    const LIGHT = rgb(0x93dc77);
+    const SAND = rgb(0xe8cb85);
+    const ICE = rgb(0xf4faff);
     return (P, mu, out) => {
       const lat = Math.asin(Math.max(-1, Math.min(1, -P[1])));
       const alat = Math.abs(lat);
-      const e = fbm(land, P[0] * 1.7, P[1] * 1.7, P[2] * 1.7, 6) - 0.04;
+      const e = fbm(land, P[0] * 1.5, P[1] * 1.5, P[2] * 1.5, 4) - 0.05;
       if (e < 0) {
         ocean(-e, out);
       } else {
-        const m = fbm(wet, P[0] * 2.2, P[1] * 2.2, P[2] * 2.2, 4);
-        out[0] = GRASS[0];
-        out[1] = GRASS[1];
-        out[2] = GRASS[2];
-        mixTo(out, FOREST, smooth(-0.05, 0.25, m) * (1 - smooth(0.6, 0.95, alat)));
-        mixTo(out, DESERT, smooth(0.0, -0.25, m) * smooth(0.15, 0.3, alat) * (1 - smooth(0.55, 0.7, alat)));
-        mixTo(out, TUNDRA, smooth(0.85, 1.05, alat));
-        mixTo(out, ROCK, smooth(0.22, 0.38, e));
-        mixTo(out, ICE, smooth(0.36, 0.46, e));
-        mixTo(out, [out[0] * 0.85, out[1] * 0.85, out[2] * 0.85], 1 - smooth(0, 0.05, e)); // darker coasts
+        out[0] = GREEN[0];
+        out[1] = GREEN[1];
+        out[2] = GREEN[2];
+        mixTo(out, LIGHT, smooth(-0.2, 0.3, fbm(tone, P[0] * 2.5, P[1] * 2.5, P[2] * 2.5, 2)) * 0.7);
+        mixTo(out, SAND, smooth(0.2, 0.35, alat) * (1 - smooth(0.5, 0.65, alat)) * 0.8);
       }
-      // ice caps
-      mixTo(out, ICE, smooth(1.12, 1.22, alat + 0.08 * fbm(wet, P[0] * 5, P[1] * 5, P[2] * 5, 2)));
-      // swirling clouds
-      const wq = fbm(warp, P[0] * 2, P[1] * 2, P[2] * 2, 3);
-      const c = fbm(cloud, P[0] * 2.8 + wq * 1.4, P[1] * 4.2, P[2] * 2.8 - wq * 1.4, 5);
-      mixTo(out, WHITE, smooth(0.04, 0.4, c) * 0.88);
+      // a soft, light shoreline
+      mixTo(out, [190, 232, 255], Math.exp(-(e * e) / 0.0004) * 0.5);
+      mixTo(out, ICE, smooth(1.1, 1.2, alat + 0.05 * fbm(tone, P[0] * 4, P[1] * 4, P[2] * 4, 2)));
+      const wq = fbm(warp, P[0] * 1.6, P[1] * 1.6, P[2] * 1.6, 2);
+      const c = fbm(cloud, P[0] * 2.2 + wq, P[1] * 3.2, P[2] * 2.2 - wq, 3);
+      mixTo(out, WHITE, smooth(0.12, 0.4, c) * 0.7);
     };
   },
 
   neptune() {
     const n = makeNoise(61);
     const w = makeNoise(62);
-    const s = makeNoise(63);
-    const col = ramp([[-0.7, 0x172f8a], [-0.2, 0x2852c7], [0.2, 0x3f72e3], [0.6, 0x6e9df5], [1, 0xa9c8ff]]);
+    const col = ramp([[-0.6, 0x3a6ce6], [0, 0x5288f5], [0.6, 0x8ab2ff]]);
     const spot = dirOf(-0.4, 0.35);
-    const DARK = rgb(0x0f1f63);
+    const SPOT = rgb(0x2c58c9);
     return (P, mu, out) => {
       const lat = Math.asin(Math.max(-1, Math.min(1, -P[1])));
-      const v = 0.32 * Math.sin(lat * 9 + 1.4 * fbm(w, P[0] * 2.4, P[1] * 2.4, P[2] * 2.4, 3)) + 0.4 * fbm(n, P[0] * 4, P[1] * 4, P[2] * 4, 4);
-      col(v, out);
+      col(0.35 * Math.sin(lat * 7 + 1.2 * fbm(w, P[0] * 2, P[1] * 2, P[2] * 2, 2)) + 0.3 * fbm(n, P[0] * 2.4, P[1] * 2.4, P[2] * 2.4, 2), out);
       const d = ellipseDist(P, spot, 0.24, 0.13);
-      if (d < 1.4) mixTo(out, DARK, 1 - smooth(0.55, 1.1, d));
-      // bright high clouds drawn out along the latitude lines
-      const streak = 1 - Math.abs(s(P[0] * 3, P[1] * 22, P[2] * 3));
-      const where = smooth(0.1, 0.45, fbm(w, P[0] * 1.5 + 9, P[1] * 1.5, P[2] * 1.5, 3));
-      mixTo(out, WHITE, smooth(0.8, 0.97, streak) * where * 0.9);
+      if (d < 1.4) mixTo(out, SPOT, 1 - smooth(0.6, 1.2, d));
+      mixTo(out, WHITE, smooth(0.86, 0.97, 1 - Math.abs(n(P[0] * 3, P[1] * 16, P[2] * 3))) * smooth(0, 0.3, fbm(w, P[0] * 1.3 + 7, P[1] * 1.3, P[2] * 1.3, 2)) * 0.4);
     };
   },
 
   saturn() {
-    const n = makeNoise(71);
     const w = makeNoise(72);
-    const col = bands([0xecdcb4, 0xdcc08c, 0xf2e6c6, 0xd1ae7a, 0xe9d5a8, 0xd8b884, 0xf0e2bf, 0xcdaa76]);
-    const POLE = rgb(0x9fa38f);
+    const col = bands([0xf6e2b0, 0xeccb8e, 0xfaecca, 0xe4c086, 0xf4dca6, 0xe9c690]);
     return (P, mu, out) => {
       const lat = Math.asin(Math.max(-1, Math.min(1, -P[1])));
-      const t = lat * 4.6 + 0.22 * fbm(w, P[0] * 3, P[1] * 3, P[2] * 3, 3) + 0.05 * fbm(n, P[0] * 10, P[1] * 10, P[2] * 10, 3);
-      col(t, out);
-      mixTo(out, POLE, smooth(0.95, 1.4, Math.abs(lat)) * 0.7);
+      col(lat * 4 + 0.18 * fbm(w, P[0] * 2.5, P[1] * 2.5, P[2] * 2.5, 2), out);
     };
   },
 
   jupiter() {
-    const n = makeNoise(81);
     const w = makeNoise(82);
-    const col = bands([0xf0e4cd, 0xc98d5c, 0xf6eee0, 0xb87447, 0xead6b4, 0xa86640, 0xf3e7d2, 0xc99566, 0xe8d4b3]);
+    const col = bands([0xf8ead6, 0xeab28a, 0xfcf3e6, 0xdc9a72, 0xf5e0c6, 0xd38e68]);
     const grs = dirOf(-0.36, 0.55);
-    const RED = rgb(0xc04f2c);
-    const RIM = rgb(0xf2d7b4);
+    const RED = rgb(0xe2774f);
+    const RIM = rgb(0xfbe3cb);
     return (P, mu, out) => {
       const lat = Math.asin(Math.max(-1, Math.min(1, -P[1])));
-      // turbulent belts: latitude pushed around by noise stretched along the bands
-      const turb = fbm(w, P[0] * 3.4, P[1] * 9, P[2] * 3.4, 5);
-      const eddies = fbm(n, P[0] * 7, P[1] * 16, P[2] * 7, 4);
-      const t = lat * 5 + 0.45 * Math.sin(lat * 9 + 1) + 0.75 * turb + 0.25 * eddies;
-      col(t, out);
+      const wave = fbm(w, P[0] * 2.4, P[1] * 5, P[2] * 2.4, 3);
+      col(lat * 4.6 + 0.4 * wave, out);
       const d = ellipseDist(P, grs, 0.3, 0.17);
       if (d < 1.5) {
-        mixTo(out, RIM, smooth(1.4, 1.05, d) * 0.8);
-        mixTo(out, RED, 1 - smooth(0.45, 1.0, d + 0.12 * turb));
+        mixTo(out, RIM, smooth(1.45, 1.05, d) * 0.7);
+        mixTo(out, RED, 1 - smooth(0.5, 1.0, d));
       }
     };
   },
 
   sun() {
     const n = makeNoise(91);
-    const m = makeNoise(92);
-    const col = ramp([[0.25, 0x9c2a06], [0.5, 0xe8620e], [0.72, 0xffa128], [0.88, 0xffd35e], [1, 0xfff6d2]]);
-    const spots = [[...dirOf(0.25, 0.3), 0.075], [...dirOf(-0.18, -0.42), 0.055], [...dirOf(-0.1, -0.3), 0.03]];
+    const col = ramp([[0.55, 0xff9f2e], [0.75, 0xffc247], [0.9, 0xffe07a], [1, 0xfff4bf]]);
     return (P, mu, out) => {
-      // granulation: bright cells with dark lanes between them
-      const cell = smooth(0.02, 0.32, Math.abs(n(P[0] * 26, P[1] * 26, P[2] * 26)));
-      const large = fbm(m, P[0] * 3, P[1] * 3, P[2] * 3, 3);
-      let I = 0.86 + 0.08 * cell + 0.1 * large;
-      for (const s of spots) {
-        const dx = P[0] - s[0];
-        const dy = P[1] - s[1];
-        const dz = P[2] - s[2];
-        const t = Math.sqrt(dx * dx + dy * dy + dz * dz) / s[3];
-        if (t < 1.6) I -= 0.25 * (1 - smooth(0.9, 1.6, t)) + 0.35 * (1 - smooth(0.3, 0.75, t));
-      }
-      I *= 0.5 + 0.5 * Math.pow(mu, 0.55); // limb darkening
-      col(I, out);
+      col(0.55 + 0.45 * Math.pow(mu, 0.6) + 0.06 * fbm(n, P[0] * 3, P[1] * 3, P[2] * 3, 3), out);
     };
   },
 
   redgiant() {
     const n = makeNoise(101);
-    const m = makeNoise(102);
-    const col = ramp([[0.2, 0x3d0705], [0.42, 0x8c1a0c], [0.62, 0xd93c18], [0.82, 0xff7a3d], [1, 0xffc79a]]);
+    const col = ramp([[0.5, 0xe2483a], [0.72, 0xff6a4f], [0.9, 0xff9a76], [1, 0xffc3a3]]);
     return (P, mu, out) => {
-      const cells = fbm(n, P[0] * 3.2, P[1] * 3.2, P[2] * 3.2, 4);
-      const fine = fbm(m, P[0] * 12, P[1] * 12, P[2] * 12, 3);
-      let I = 0.8 + 0.22 * cells + 0.05 * fine;
-      I *= 0.38 + 0.62 * Math.pow(mu, 0.7);
-      col(I, out);
+      col(0.5 + 0.48 * Math.pow(mu, 0.7) + 0.08 * fbm(n, P[0] * 2.6, P[1] * 2.6, P[2] * 2.6, 3), out);
     };
   },
 
   supernova() {
     const n = makeNoise(111);
     const m = makeNoise(112);
-    const body = ramp([[0, 0xffffff], [0.3, 0xd8f0ff], [0.6, 0x7fb4ff], [0.85, 0x5b5fe0], [1, 0x6a3fc4]]);
-    const PINK = rgb(0xff8fd0);
-    const GOLD = rgb(0xffc27a);
-    const ICE = rgb(0xeaf8ff);
+    const body = ramp([[0, 0xffffff], [0.35, 0xdaf3ff], [0.65, 0xa6c9ff], [1, 0xb79dff]]);
+    const PINK = rgb(0xffa3dc);
     return (P, mu, out) => {
       const r = Math.sqrt(Math.max(0, 1 - mu * mu));
-      const swirl = fbm(m, P[0] * 2.5, P[1] * 2.5, P[2] * 2.5, 4);
-      body(r + 0.12 * swirl, out);
-      // thin glowing filaments of the expanding shell
-      const fil = 1 - Math.abs(fbm(n, P[0] * 3.6, P[1] * 3.6, P[2] * 3.6, 5));
-      const f = smooth(0.8, 0.95, fil) * smooth(0.25, 0.65, r);
-      mixTo(out, swirl > 0 ? PINK : GOLD, f * 0.85);
-      mixTo(out, ICE, smooth(0.9, 0.99, fil) * (1 - r) * 0.8);
-      out[3] = 1 - 0.5 * smooth(0.85, 1, r);
+      body(r + 0.1 * fbm(m, P[0] * 2, P[1] * 2, P[2] * 2, 2), out);
+      mixTo(out, PINK, smooth(0.82, 0.96, 1 - Math.abs(fbm(n, P[0] * 2.6, P[1] * 2.6, P[2] * 2.6, 3))) * smooth(0.3, 0.7, r) * 0.7);
+      out[3] = 1 - 0.45 * smooth(0.86, 1, r);
     };
   },
 
@@ -449,63 +382,50 @@ const SURFACES = {
     const RING = rgb(0xffe2b0);
     return (P, mu, out) => {
       const r = Math.sqrt(Math.max(0, 1 - mu * mu));
-      out[0] = 2;
-      out[1] = 1;
-      out[2] = 6;
+      out[0] = 4;
+      out[1] = 3;
+      out[2] = 10;
       mixTo(out, RING, Math.exp(-((r - 0.94) * (r - 0.94)) / 0.0012)); // photon ring
     };
   },
 
   comet() {
     const n = makeNoise(121);
-    const m = makeNoise(122);
-    const col = ramp([[-0.5, 0x2a3140], [0.1, 0x4f5a6d], [0.6, 0x8e9bb0]]);
-    const ICE = rgb(0xe4f8ff);
+    const col = ramp([[-0.5, 0x8fb8e6], [0.2, 0xc6e2ff], [0.7, 0xf2fbff]]);
     return (P, mu, out) => {
-      col(fbm(n, P[0] * 3, P[1] * 3, P[2] * 3, 5), out);
-      mixTo(out, ICE, smooth(0.05, 0.3, fbm(m, P[0] * 2.6, P[1] * 2.6, P[2] * 2.6, 4)) * 0.85);
+      col(fbm(n, P[0] * 2.4, P[1] * 2.4, P[2] * 2.4, 3) * 1.3, out);
     };
   },
 
-  rogue() {
-    const n = makeNoise(131);
-    const m = makeNoise(132);
-    const col = ramp([[-0.6, 0x09060f], [0, 0x1d1430], [0.6, 0x3b2a55]]);
-    const LAVA = rgb(0xff3d1f);
-    const HOT = rgb(0xffd56b);
+  // Dark matter: a dense, deep-black stone that looks impossible to break.
+  // Chunky grain in a few close shades of near-black, with faint cold flecks.
+  dark() {
+    const n = makeNoise(141);
+    const m = makeNoise(142);
+    const SHADES = [rgb(0x07070b), rgb(0x0f0f15), rgb(0x18181f), rgb(0x22222b)];
+    const FLECK = rgb(0x4b4a63);
     return (P, mu, out) => {
-      col(fbm(n, P[0] * 2.6, P[1] * 2.6, P[2] * 2.6, 5), out);
-      // glowing cracks: thin lines where the noise crosses zero
-      const crack = 1 - Math.abs(fbm(m, P[0] * 3.3, P[1] * 3.3, P[2] * 3.3, 4));
-      mixTo(out, LAVA, smooth(0.86, 0.96, crack));
-      mixTo(out, HOT, smooth(0.95, 0.995, crack));
+      // blocky grain: noise sampled on a coarse lattice, then snapped to a few shades
+      const q = 9;
+      const v = n(Math.floor(P[0] * q) + 0.5, Math.floor(P[1] * q) + 0.5, Math.floor(P[2] * q) + 0.5);
+      const big = fbm(m, P[0] * 1.8, P[1] * 1.8, P[2] * 1.8, 2);
+      const k = Math.max(0, Math.min(3, Math.floor((v * 0.8 + big * 0.6 + 0.6) * 2.4)));
+      out[0] = SHADES[k][0];
+      out[1] = SHADES[k][1];
+      out[2] = SHADES[k][2];
+      const fleck = n(Math.floor(P[0] * 26) + 0.5, Math.floor(P[1] * 26) + 0.5, Math.floor(P[2] * 26) + 0.5);
+      if (fleck > 0.42) mixTo(out, FLECK, 0.6);
     };
   },
 };
 
-// ---------- lighting ----------
-// One light for the whole scene, from the upper left and slightly in front.
+// ---------- the light layer ----------
+// No shadows: roundness comes from a soft rim glow, a broad sheen and a small glossy spot,
+// all a little stronger toward the upper left.
 
-const LIGHT = (() => {
-  const v = [-0.7, -0.6, 0.22];
-  const l = Math.hypot(...v);
-  return v.map((c) => c / l);
-})();
-const HALF = (() => {
-  const v = [LIGHT[0], LIGHT[1], LIGHT[2] + 1];
-  const l = Math.hypot(...v);
-  return v.map((c) => c / l);
-})();
-
-/** night: darkness of the unlit side; atm: atmosphere colour or null; atmK: its strength; spec/shine: highlight. */
-function lightFor(params) {
-  const atm = params.atm == null ? null : rgb(params.atm);
+function glossFor(params) {
+  const rim = rgb(params.rim);
   return (x, y, z, out) => {
-    const ndl = x * LIGHT[0] + y * LIGHT[1] + z * LIGHT[2];
-    // a fairly sharp terminator, and the day side getting brighter toward the light
-    const day = smooth(-0.12, 0.16, ndl);
-    const lit = day * (0.6 + 0.4 * Math.min(1, Math.max(0, ndl) / 0.6));
-    // premultiplied over-compositing of: shadow, limb, atmosphere, highlight
     let r = 0;
     let g = 0;
     let b = 0;
@@ -516,15 +436,14 @@ function lightFor(params) {
       b = cb * ca + b * (1 - ca);
       a = ca + a * (1 - ca);
     };
-    over(4, 2, 14, (1 - lit) * params.night);
-    over(4, 2, 14, Math.pow(1 - z, 3) * 0.3);
-    if (atm) {
-      const rim = Math.pow(1 - z, params.rimPow ?? 2.4) * params.atmK * (0.2 + 0.8 * smooth(-0.35, 0.55, ndl));
-      over(atm[0], atm[1], atm[2], Math.min(1, rim));
-    }
-    const ndh = x * HALF[0] + y * HALF[1] + z * HALF[2];
-    const spec = Math.pow(Math.max(0, ndh), params.shine ?? 30) * params.spec * day;
-    over(255, 255, 255, Math.min(1, spec));
+    const upperLeft = smooth(-0.9, 0.9, -(x + y) * 0.7);
+    over(rim[0], rim[1], rim[2], Math.min(1, Math.pow(1 - z, 2.4) * params.rimK * (0.55 + 0.45 * upperLeft)));
+    const sx = x + 0.32;
+    const sy = y + 0.38;
+    over(255, 255, 255, Math.exp(-(sx * sx + sy * sy) / 0.2) * params.sheen);
+    const gx = x + 0.4;
+    const gy = y + 0.48;
+    over(255, 255, 255, Math.exp(-(gx * gx + gy * gy * 2.2) / 0.012) * params.gloss);
     if (a > 0.0001) {
       out[0] = r / a;
       out[1] = g / a;
@@ -563,10 +482,10 @@ const SATURN_RINGS = (() => {
   const rnd = seeded(77);
   const list = [];
   const zones = [
-    [1.2, 1.33, [150, 132, 108], 0.22], // faint inner ring
-    [1.33, 1.6, [232, 214, 176], 0.9], // bright broad ring
-    [1.6, 1.65, [40, 30, 20], 0.05], // the dark gap
-    [1.65, 1.86, [214, 194, 156], 0.72], // outer ring
+    [1.2, 1.33, [214, 200, 176], 0.3], // faint inner ring
+    [1.33, 1.6, [250, 234, 198], 0.92], // bright broad ring
+    [1.6, 1.65, [60, 50, 40], 0.04], // the gap
+    [1.65, 1.86, [238, 220, 184], 0.78], // outer ring
   ];
   for (const [a, b, c, al] of zones) {
     const steps = Math.max(1, Math.round((b - a) / 0.012));
@@ -652,15 +571,6 @@ const PARTS = {
       for (const [r0, r1, c, al] of SATURN_RINGS) {
         if (al <= 0.01) continue;
         ringBand(ctx, R, r0, r1, 0.3, `rgba(${c[0]},${c[1]},${c[2]},${al})`, front);
-      }
-      if (front) {
-        // the planet's shadow falls across the rings behind it, away from the light
-        ctx.globalCompositeOperation = 'source-atop';
-        const g = ctx.createLinearGradient(0, 0, 1.9 * R, 0.6 * R);
-        g.addColorStop(0, 'rgba(0,0,0,0)');
-        g.addColorStop(1, 'rgba(0,0,0,0.25)');
-        ctx.fillStyle = g;
-        ctx.fillRect(-2 * R, -2 * R, 4 * R, 4 * R);
       }
     },
   },
@@ -802,44 +712,54 @@ const PARTS = {
       ctx.fill();
     },
   },
-  rogueAura: {
-    size: 1.8,
+  darkHalo: {
+    size: 1.9,
+    draw(ctx, R) {
+      // a heavy, smoky darkness around it, edged with a cold violet line
+      const g = ctx.createRadialGradient(0, 0, R * 0.9, 0, 0, R * 1.85);
+      g.addColorStop(0, 'rgba(6,4,16,.75)');
+      g.addColorStop(0.45, 'rgba(14,8,34,.35)');
+      g.addColorStop(1, 'rgba(14,8,34,0)');
+      ctx.fillStyle = g;
+      ctx.beginPath();
+      ctx.arc(0, 0, R * 1.85, 0, TAU);
+      ctx.fill();
+      ctx.lineWidth = R * 0.035;
+      ctx.strokeStyle = 'rgba(150,130,255,.45)';
+      ctx.beginPath();
+      ctx.arc(0, 0, R * 1.04, 0, TAU);
+      ctx.stroke();
+    },
+  },
+  darkSpark: {
+    size: 1.7,
     blend: 'add',
     spin: 'slow',
     draw(ctx, R) {
-      glow(ctx, R, 1.8, [[0, 'rgba(255,80,200,.7)'], [0.3, 'rgba(255,90,40,.3)'], [1, 'rgba(120,20,90,0)']]);
-      const rnd = seeded(3);
-      for (let i = 0; i < 16; i++) {
-        ctx.save();
-        ctx.rotate((i / 16) * TAU + rnd() * 0.3);
-        const len = (1.25 + rnd() * 0.4) * R;
-        const g = ctx.createLinearGradient(R * 0.8, 0, len, 0);
-        g.addColorStop(0, i % 2 ? 'rgba(255,120,40,.45)' : 'rgba(255,70,210,.4)');
-        g.addColorStop(1, 'rgba(255,60,120,0)');
-        ctx.fillStyle = g;
+      const rnd = seeded(14);
+      for (let i = 0; i < 18; i++) {
+        const a = rnd() * TAU;
+        const d = R * (1.12 + rnd() * 0.4);
         ctx.beginPath();
-        ctx.moveTo(R * 0.85, -R * 0.15);
-        ctx.quadraticCurveTo(len * 0.85, -R * 0.02, len, 0);
-        ctx.quadraticCurveTo(len * 0.85, R * 0.02, R * 0.85, R * 0.15);
+        ctx.arc(Math.cos(a) * d, Math.sin(a) * d, R * (0.012 + rnd() * 0.02), 0, TAU);
+        ctx.fillStyle = `rgba(170,150,255,${0.35 + rnd() * 0.5})`;
         ctx.fill();
-        ctx.restore();
       }
     },
   },
-  rogueTail: {
+  darkTrail: {
     size: 3.6,
-    blend: 'add',
     spin: 'velocity',
     draw(ctx, R) {
       const g = ctx.createLinearGradient(0, 0, -3.5 * R, 0);
-      g.addColorStop(0, 'rgba(255,110,60,.75)');
-      g.addColorStop(0.5, 'rgba(255,60,190,.3)');
-      g.addColorStop(1, 'rgba(160,40,255,0)');
+      g.addColorStop(0, 'rgba(10,6,26,.7)');
+      g.addColorStop(0.6, 'rgba(40,24,90,.25)');
+      g.addColorStop(1, 'rgba(60,40,140,0)');
       ctx.fillStyle = g;
       ctx.beginPath();
-      ctx.moveTo(0, -0.95 * R);
-      ctx.quadraticCurveTo(-1.8 * R, -0.6 * R, -3.5 * R, 0);
-      ctx.quadraticCurveTo(-1.8 * R, 0.6 * R, 0, 0.95 * R);
+      ctx.moveTo(0, -0.98 * R);
+      ctx.quadraticCurveTo(-1.8 * R, -0.62 * R, -3.5 * R, 0);
+      ctx.quadraticCurveTo(-1.8 * R, 0.62 * R, 0, 0.98 * R);
       ctx.fill();
     },
   },
@@ -849,26 +769,29 @@ const PARTS = {
 // light: lighting-layer parameters, or null for bodies that shine on their own.
 // parts: [name, front?] - drawn behind the planet unless front is true.
 
-const ROCK = { night: 0.9, spec: 0.1, shine: 22 };
+// rim: colour of the soft glow around the edge; rimK its strength; sheen and gloss the highlights
+const ROCK = { rim: 0xffffff, rimK: 0.35, sheen: 0.12, gloss: 0.32 };
+const STAR = { rim: 0xfff8dc, rimK: 0.3, sheen: 0.1, gloss: 0 };
 
 export const TIERS = [
-  { name: 'Asteroid', r: 21, color: 0xa39482, surface: 'asteroid', light: ROCK, parts: [] },
-  { name: 'Moon', r: 26, color: 0xd5d9e0, surface: 'moon', light: ROCK, parts: [] },
-  { name: 'Mars', r: 32, color: 0xe0683f, surface: 'mars', light: { night: 0.9, atm: 0xffa07a, atmK: 0.4, spec: 0.12, shine: 24 }, parts: [] },
-  { name: 'Venus', r: 39, color: 0xf0c27a, surface: 'venus', light: { night: 0.88, atm: 0xfff1cf, atmK: 0.75, spec: 0.16, shine: 26 }, parts: [] },
-  { name: 'Earth', r: 47, color: 0x3b8cf0, surface: 'earth', light: { night: 0.9, atm: 0x78c0ff, atmK: 0.95, spec: 0.4, shine: 44 }, parts: [] },
-  { name: 'Neptune', r: 56, color: 0x4263eb, surface: 'neptune', light: { night: 0.88, atm: 0x9fdcff, atmK: 0.75, spec: 0.28, shine: 34 }, parts: [] },
-  { name: 'Saturn', r: 66, color: 0xe3c27a, surface: 'saturn', light: { night: 0.88, atm: 0xfff0cc, atmK: 0.45, spec: 0.16, shine: 28 }, parts: [['saturnRing', false], ['saturnRing', true]] },
-  { name: 'Jupiter', r: 78, color: 0xd98f55, surface: 'jupiter', light: { night: 0.88, atm: 0xffe7c9, atmK: 0.45, spec: 0.16, shine: 28 }, parts: [] },
-  { name: 'Sun', r: 92, color: 0xffc93a, surface: 'sun', light: null, parts: [['sunGlow', false]] },
-  { name: 'Red Giant', r: 108, color: 0xff5a3c, surface: 'redgiant', light: null, parts: [['redGlow', false]] },
-  { name: 'Supernova', r: 126, color: 0x9fd8ff, surface: 'supernova', light: null, parts: [['novaGlow', false]] },
+  { name: 'Asteroid', r: 21, color: 0xb3a493, surface: 'asteroid', light: ROCK, parts: [] },
+  { name: 'Moon', r: 26, color: 0xdcdaea, surface: 'moon', light: ROCK, parts: [] },
+  { name: 'Mars', r: 32, color: 0xec8158, surface: 'mars', light: { rim: 0xffd2bf, rimK: 0.45, sheen: 0.12, gloss: 0.35 }, parts: [] },
+  { name: 'Venus', r: 39, color: 0xf6cf8a, surface: 'venus', light: { rim: 0xfff4da, rimK: 0.5, sheen: 0.12, gloss: 0.35 }, parts: [] },
+  { name: 'Earth', r: 47, color: 0x3a8eec, surface: 'earth', light: { rim: 0xb8e2ff, rimK: 0.65, sheen: 0.12, gloss: 0.45 }, parts: [] },
+  { name: 'Neptune', r: 56, color: 0x5288f5, surface: 'neptune', light: { rim: 0xc6e8ff, rimK: 0.6, sheen: 0.12, gloss: 0.4 }, parts: [] },
+  { name: 'Saturn', r: 66, color: 0xf0d39c, surface: 'saturn', light: { rim: 0xfff4dc, rimK: 0.45, sheen: 0.12, gloss: 0.35 }, parts: [['saturnRing', false], ['saturnRing', true]] },
+  { name: 'Jupiter', r: 78, color: 0xeab28a, surface: 'jupiter', light: { rim: 0xffefe0, rimK: 0.45, sheen: 0.12, gloss: 0.35 }, parts: [] },
+  { name: 'Sun', r: 92, color: 0xffc247, surface: 'sun', light: STAR, parts: [['sunGlow', false]] },
+  { name: 'Red Giant', r: 108, color: 0xff6a4f, surface: 'redgiant', light: STAR, parts: [['redGlow', false]] },
+  { name: 'Supernova', r: 126, color: 0xa6c9ff, surface: 'supernova', light: null, parts: [['novaGlow', false]] },
   { name: 'Black Hole', r: 80, color: 0xffb347, surface: 'blackhole', light: null, parts: [['holeGlow', false], ['holeDisk', false], ['holeDisk', true]] },
 ];
 
 export const SPECIALS = {
-  comet: { name: 'Comet', r: 24, color: 0xbff3ff, surface: 'comet', light: { night: 0.5, atm: 0xaef5ff, atmK: 1, spec: 0.35, shine: 30 }, parts: [['coma', false], ['cometTail', false]] },
-  rogue: { name: 'Rogue Planet', r: 74, color: 0xff4fb0, surface: 'rogue', light: { night: 0.55, atm: 0xff5ad8, atmK: 0.9, spec: 0.3, shine: 30 }, parts: [['rogueTail', false], ['rogueAura', false]] },
+  comet: { name: 'Comet', r: 24, color: 0xc6e2ff, surface: 'comet', light: { rim: 0xe6fcff, rimK: 0.7, sheen: 0.14, gloss: 0.45 }, parts: [['coma', false], ['cometTail', false]] },
+  // a dense ball of dark matter: deep black, a cold violet edge, a hard polished glint
+  wrecker: { name: 'Dark Matter', r: 72, color: 0x2a2440, surface: 'dark', light: { rim: 0x9a88ff, rimK: 0.55, sheen: 0.05, gloss: 0.55 }, parts: [['darkTrail', false], ['darkHalo', false], ['darkSpark', false]] },
 };
 
 export const HOLE = TIERS.length - 1; // the black hole
@@ -902,8 +825,6 @@ function renderSphere(size, rPx, shadeFn, frame) {
       const y = y0 * k;
       const z = Math.sqrt(Math.max(0, 1 - x * x - y * y));
       out[3] = 1;
-      VIEW[0] = x;
-      VIEW[1] = y;
       if (frame) {
         frame(x, y, z, P);
         shadeFn(P, z, out);
@@ -940,24 +861,6 @@ function frameOf(tilt, roll, spin) {
   };
 }
 
-/** The inverse of frameOf: a direction in the planet's frame back to view space. */
-function viewOf(tilt, roll, spin) {
-  const ct = Math.cos(tilt);
-  const st = Math.sin(tilt);
-  const cr = Math.cos(roll);
-  const sr = Math.sin(roll);
-  const cs = Math.cos(spin);
-  const ss = Math.sin(spin);
-  return (P) => {
-    const x1 = P[0] * cs - P[2] * ss;
-    const z2 = P[0] * ss + P[2] * cs;
-    const y2 = P[1];
-    const y1 = y2 * ct + z2 * st;
-    const z = -y2 * st + z2 * ct;
-    return [x1 * cr - y1 * sr, x1 * sr + y1 * cr, z];
-  };
-}
-
 const FRAMES = {
   asteroid: [0.4, 0.5, 0.3],
   moon: [0.1, 0.1, 0.2],
@@ -972,7 +875,7 @@ const FRAMES = {
   supernova: [0, 0, 0],
   blackhole: [0, 0, 0],
   comet: [0.3, 0.4, 0.6],
-  rogue: [0.3, 0.3, 0.2],
+  dark: [0.3, 0.3, 0.2],
 };
 
 const surfaceCanvases = new Map();
@@ -984,7 +887,7 @@ function surfaceCanvas(kind) {
     const def = defOf(kind);
     const size = Math.ceil((def.r + PAD) * 2 * TEX_SCALE);
     const f = FRAMES[def.surface];
-    c = renderSphere(size, def.r * TEX_SCALE, SURFACES[def.surface](viewOf(f[0], f[1], f[2])), frameOf(f[0], f[1], f[2]));
+    c = renderSphere(size, def.r * TEX_SCALE, SURFACES[def.surface](), frameOf(f[0], f[1], f[2]));
     surfaceCanvases.set(kind, c);
   }
   return c;
@@ -997,7 +900,7 @@ function lightCanvas(kind) {
     // lighting is smooth, so it is rendered at a modest resolution
     const s = Math.min(TEX_SCALE, 96 / def.r);
     const size = Math.ceil((def.r + PAD) * 2 * s);
-    c = renderSphere(size, (def.r * size) / ((def.r + PAD) * 2), lightFor(def.light), null);
+    c = renderSphere(size, (def.r * size) / ((def.r + PAD) * 2), glossFor(def.light), null);
     lightCanvases.set(kind, c);
   }
   return c;
@@ -1042,7 +945,7 @@ export const surfaceKey = (kind) => `surface_${kind}`;
 export const lightKey = (kind) => `light_${kind}`;
 export const partKey = (kind, i) => `part_${kind}_${i}`;
 export const portraitKey = (kind) => `portrait_${kind}`;
-export const ALL_KINDS = [...TIERS.keys(), 'comet', 'rogue'];
+export const ALL_KINDS = [...TIERS.keys(), 'comet', 'wrecker'];
 
 /** Everything one body needs: surface, lighting, parts and its portrait. */
 export function makeKindTextures(scene, kind) {

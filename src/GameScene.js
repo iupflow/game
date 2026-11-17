@@ -38,7 +38,12 @@ const PULL_MAX = 165; // drag length for full power, when the screen leaves room
 const PULL_MIN_FULL = 70; // near a screen edge, full power is reached sooner, but never sooner than this
 const PULL_BACK = 16; // how far the planet visibly draws back at full power
 const FLIGHT_DRAG = 0.002; // air drag while a launched planet is still in flight
-const SCATTER_DRAG = 0.06; // extra drag for planets knocked loose by a rogue planet
+const SCATTER_DRAG = 0.012; // little drag while the field is scattered, so planets fly freely
+const BOUNCY_DAMPING = 0.04; // while scattered, planets bounce off each other instead of sticking
+const BOUNCY_RESTITUTION = 0.55;
+const WALL_SIDE = 6; // the screen edges are walls, so nothing is ever flung out of sight
+const WALL_TOP = 186;
+const WALL_BOTTOM = 1136;
 const IMPACT_SQUASH = 0.0114; // peak squash per unit of impact speed, between equal weights
 const MAX_SQUASH = 0.42;
 const RIPPLE_MIN = 0.8; // planets pressed together faster than this keep squashing
@@ -46,12 +51,13 @@ const SKIN_SPRING = 0.13; // how hard the soft skins push back (lower = squishie
 const SKIN_DAMPING = 0.2;
 const WORLD_SPIN = 0.07; // the whole field slowly turns, radians per second
 const SHOT_COOLDOWN = 450;
-const DANGER_LIMIT_MS = 1800;
+const DANGER_LIMIT_MS = 3000; // how long a planet may rest outside the ring
+const DANGER_MARGIN = 6; // a planet must be clearly outside, not just touching the line
 const SETTLE_MS = 1000;
 const SETTLED_SPEED = 1.2; // only planets slower than this count as resting outside the ring
 const COMET_BASE = 150; // energy for the first comet of a game
 const COMET_STEP = 60; // every comet launched makes the next one cost this much more
-const ROGUE_SPEED = 10; // px per step: slow and heavy, so what it hits stays on screen
+const WRECKER_SPEED = 19; // px per step
 const LASER_CHARGE_MS = 420;
 const LASER_BEAM_MS = 560;
 const FONT = 'system-ui, -apple-system, "Segoe UI", Roboto, sans-serif';
@@ -60,7 +66,7 @@ const FX = 40;
 const OVERLAY = 100;
 const INITIAL_SEEN = [0, 1, 2];
 const SPAWN_WEIGHTS = [38, 30, 20, 12]; // only the four smallest bodies are ever launched
-const FIRST_KINDS = [0, 1, 2, 'comet', 'rogue']; // what the first screen shows; the rest is textured in the background
+const FIRST_KINDS = [0, 1, 2, 'comet', 'wrecker']; // what the first screen shows; the rest is textured in the background
 
 function mix(c1, c2, t) {
   const ch = (c, s) => (c >> s) & 255;
@@ -88,8 +94,10 @@ export class GameScene extends Phaser.Scene {
     this.contacts = new Set();
     this.held = null;
     this.hole = null;
-    this.rogue = null;
-    this.rogueIncoming = false;
+    this.wrecker = null;
+    this.wreckerIncoming = false;
+    this.scatterUntil = 0;
+    this.culprit = null;
     this.beam = null;
     this.state = 'flying'; // aim | flying | crunch | over | busy | paused
     this.nextHeldAt = 0;
@@ -121,7 +129,7 @@ export class GameScene extends Phaser.Scene {
     this.cometPending = false;
     this.cometUses = 0;
     this.lasers = 1;
-    this.rogues = 1;
+    this.wreckers = 1;
     this.revived = false;
     this.seen = store.get('jd2_seen', INITIAL_SEEN);
 
@@ -131,6 +139,7 @@ export class GameScene extends Phaser.Scene {
     this.batch = new PlanetBatch(this, CX, CY).setDepth(20);
     this.frontLayer = this.add.container(CX, CY).setDepth(30);
     this.aimGfx = this.add.graphics().setDepth(36);
+    this.dangerGfx = this.add.graphics().setDepth(37);
     this.beamGfx = this.add.graphics().setDepth(FX + 2).setBlendMode(Phaser.BlendModes.ADD);
     this.buildField();
     this.buildHud();
@@ -146,6 +155,7 @@ export class GameScene extends Phaser.Scene {
       this.tweens.add({ targets: this.hint, alpha: 0.35, duration: 700, yoyo: true, repeat: -1 });
     }
     this.targetHint = this.text(W / 2, 1066, 'Tap a planet to vaporize it', 26, '#ff9ae6').setOrigin(0.5).setVisible(false);
+    this.dangerLabel = this.text(0, 0, '', 34, '#ffffff').setOrigin(0.5).setDepth(38).setStroke('#7a0f2a', 7).setVisible(false);
 
     this.nextKind = this.rollTier();
     this.prepareHeld();
@@ -288,10 +298,10 @@ export class GameScene extends Phaser.Scene {
 
   drawBackground() {
     const g = this.add.graphics();
-    g.fillGradientStyle(0x150a33, 0x150a33, 0x05030f, 0x05030f, 1);
+    g.fillGradientStyle(0x221a5a, 0x221a5a, 0x0c0a26, 0x0c0a26, 1);
     g.fillRect(-W, -H, W * 3, H * 3);
-    for (const [x, y, s, tint] of [[150, 380, 5.2, 0x5b2bbf], [600, 900, 6, 0x1f4fb5], [520, 300, 3.6, 0xa0328f]]) {
-      this.add.image(x, y, 'soft').setScale(s / TEX_SCALE).setTint(tint).setAlpha(0.2).setBlendMode(Phaser.BlendModes.ADD);
+    for (const [x, y, s, tint] of [[150, 380, 5.2, 0x6a45d8], [600, 900, 6, 0x3a6fd8], [520, 300, 3.6, 0xc05aa8]]) {
+      this.add.image(x, y, 'soft').setScale(s / TEX_SCALE).setTint(tint).setAlpha(0.22).setBlendMode(Phaser.BlendModes.ADD);
     }
     for (let i = 0; i < 110; i++) {
       g.fillStyle(0xffffff, 0.25 + Math.random() * 0.6);
@@ -311,8 +321,8 @@ export class GameScene extends Phaser.Scene {
     g.strokeCircle(0, 0, R_LIMIT * 0.66);
     g.strokeCircle(0, 0, R_LIMIT * 0.33);
     this.limitRing = this.add.graphics();
-    this.drawLimitRing(0xb9a8e6);
-    this.limitRing.setAlpha(0.4);
+    this.drawLimitRing(0xc9bcff);
+    this.limitRing.setAlpha(0.55);
     const well = this.add.image(0, 0, 'soft').setScale(2.6 / TEX_SCALE).setTint(0x9f6bff).setAlpha(0.55).setBlendMode(Phaser.BlendModes.ADD);
     this.tweens.add({ targets: well, scale: 3.3 / TEX_SCALE, alpha: 0.3, duration: 1500, yoyo: true, repeat: -1, ease: 'Sine.inOut' });
     // the heart of the well
@@ -415,9 +425,9 @@ export class GameScene extends Phaser.Scene {
 
   buildBottomBar() {
     this.laserBtn = this.boosterButton(100, 1202, 'icon_laser', 0.95, 'LASER', () => this.useLaser());
-    this.rogueBtn = this.boosterButton(W - 100, 1202, portraitKey('rogue'), 0.55, 'ROGUE', () => this.useRogue());
+    this.wreckerBtn = this.boosterButton(W - 100, 1202, portraitKey('wrecker'), 0.55, 'SMASH', () => this.useWrecker());
     this.laserBtn.setCount(this.lasers);
-    this.rogueBtn.setCount(this.rogues);
+    this.wreckerBtn.setCount(this.wreckers);
 
     // album strip: every body in the chain, unknown ones as silhouettes
     const cols = 6;
@@ -501,7 +511,7 @@ export class GameScene extends Phaser.Scene {
 
   swap() {
     if (this.state !== 'aim' || !this.held || this.held.tier < 0 || this.aiming) return;
-    Sfx.click();
+    Sfx.swap();
     Haptics.light();
     const current = this.held.kind;
     this.setHeld(this.nextKind);
@@ -861,24 +871,30 @@ export class GameScene extends Phaser.Scene {
     this.tweens.add({ targets: flash, scale: (t.r / 9) / TEX_SCALE, alpha: 0, duration: 480, ease: 'Cubic.out', onComplete: () => flash.destroy() });
     this.removePiece(target);
     this.shockwave(x, y, t.r + 110, 3);
-    this.cameras.main.shake(220, 0.01);
-    Sfx.boom();
+    this.cameras.main.shake(120, 0.003);
+    Sfx.vaporize();
     Haptics.success();
   }
 
-  // Rogue planet: a huge wanderer crosses the field and scatters everything; gravity gathers it all back.
+  // Dark matter: a dense black ball crashes in like a break shot in billiards. Everything flies
+  // apart, bounces off each other and off the screen edges, then gravity gathers the planets
+  // back together in a new, random arrangement.
 
-  async useRogue() {
-    if (this.rogue || this.rogueIncoming) return;
+  async useWrecker() {
+    if (this.wrecker || this.wreckerIncoming) return;
     if (this.state !== 'aim' && this.state !== 'flying') return;
-    if (this.rogues <= 0) {
-      if (await this.rewarded()) this.rogues++;
-      this.rogueBtn.setCount(this.rogues);
+    if (this.wreckers <= 0) {
+      if (await this.rewarded()) this.wreckers++;
+      this.wreckerBtn.setCount(this.wreckers);
       return;
     }
-    this.rogues--;
-    this.rogueBtn.setCount(this.rogues);
-    this.rogueIncoming = true;
+    if (!this.pieces.some((p) => p.tier >= 0)) {
+      this.floatText(W / 2, 1066, 'Nothing to smash yet', '#ffffff');
+      return;
+    }
+    this.wreckers--;
+    this.wreckerBtn.setCount(this.wreckers);
+    this.wreckerIncoming = true;
 
     // aim at the middle of the cluster, from a random side, slightly off-centre
     let mx = 0;
@@ -892,7 +908,7 @@ export class GameScene extends Phaser.Scene {
     const tx = mm ? mx / mm : CX;
     const ty = mm ? my / mm : CY;
     const ang = Math.random() * Math.PI * 2;
-    const off = (Math.random() - 0.5) * 60;
+    const off = (Math.random() - 0.5) * 50;
     const sx = tx + Math.cos(ang) * 880 - Math.sin(ang) * off;
     const sy = ty + Math.sin(ang) * 880 + Math.cos(ang) * off;
 
@@ -904,35 +920,54 @@ export class GameScene extends Phaser.Scene {
     const wx = CX + dx * k;
     const wy = CY + dy * k;
     const warn = this.add.image(wx, wy, 'chevron').setDepth(FX + 3).setScale(1.2 / TEX_SCALE).setRotation(Math.atan2(-dy, -dx));
-    const glowW = this.add.image(wx, wy, 'soft').setDepth(FX + 2).setTint(0xff3b6b).setBlendMode(Phaser.BlendModes.ADD).setScale(1.8 / TEX_SCALE);
+    const glowW = this.add.image(wx, wy, 'soft').setDepth(FX + 2).setTint(0x8f7bff).setBlendMode(Phaser.BlendModes.ADD).setScale(1.8 / TEX_SCALE);
     this.tweens.add({ targets: [warn, glowW], alpha: 0.2, duration: 140, yoyo: true, repeat: 3 });
-    Sfx.rogueWarn();
+    Sfx.darkWarn();
     Haptics.medium();
     this.time.delayedCall(260, () => Haptics.medium());
+    this.time.delayedCall(520, () => Haptics.medium());
     this.time.delayedCall(820, () => {
       warn.destroy();
       glowW.destroy();
-      this.rogueIncoming = false;
-      const r = new Planet(this, 'rogue', sx, sy);
+      this.wreckerIncoming = false;
+      const r = new Planet(this, 'wrecker', sx, sy);
       const dl = Math.hypot(tx - sx, ty - sy) || 1;
-      r.vx = ((tx - sx) / dl) * ROGUE_SPEED;
-      r.vy = ((ty - sy) / dl) * ROGUE_SPEED;
+      r.vx = ((tx - sx) / dl) * WRECKER_SPEED;
+      r.vy = ((ty - sy) / dl) * WRECKER_SPEED;
       r.tailAngle = Math.atan2(r.vy, r.vx);
       r.pop = 1;
       r.hits = new Set();
       r.impacted = false;
-      this.rogue = r;
-      Sfx.rogueRumble();
+      this.wrecker = r;
+      Sfx.darkApproach();
     });
   }
 
-  /**
-   * One physics step of the rogue planet. It moves straight on like a snowplough: whatever it
-   * touches is pushed ahead a little and thrown off to the side, so it is knocked out of the
-   * way instead of being carried along.
-   */
-  stepRogue(now) {
-    const r = this.rogue;
+  /** The break shot: every planet is sent flying away from the point of impact. */
+  breakShot(x, y, fx, fy, now) {
+    for (const p of this.pieces) {
+      const b = p.body;
+      let dx = b.position.x - x;
+      let dy = b.position.y - y;
+      const d = Math.hypot(dx, dy) || 1;
+      dx /= d;
+      dy /= d;
+      const near = Math.max(0.5, 1 - d / 650); // close planets fly hardest, but everything moves
+      const speed = (8 + Math.random() * 6) * near;
+      const spin = (Math.random() - 0.5) * 7; // a random sideways kick, so every scatter is different
+      this.matter.body.setVelocity(b, { x: dx * speed - dy * spin + fx * 4, y: dy * speed + dx * spin + fy * 4 });
+      p.squash(Math.atan2(dy, dx), MAX_SQUASH * near);
+      p.born = now;
+      p.flying = false;
+    }
+    this.scatterUntil = now + 1200; // free flight: little drag, bouncy collisions
+    this.gravBoostUntil = now + 4200; // then gravity pulls everything back a little harder
+    this.calmUntil = now + 6000; // no game over while the field is in pieces
+  }
+
+  /** One physics step of the dark matter ball: it moves straight on and bats aside whatever it touches. */
+  stepWrecker(now) {
+    const r = this.wrecker;
     r.x += r.vx;
     r.y += r.vy;
     const speed = Math.hypot(r.vx, r.vy);
@@ -949,35 +984,27 @@ export class GameScene extends Phaser.Scene {
       const d = Math.hypot(dx, dy) || 1;
       const overlap = sum - d;
       if (overlap <= 0) continue;
-      const along = dx * fx + dy * fy; // > 0: in front of the rogue's centre
+      if (!r.impacted) {
+        r.impacted = true;
+        this.breakShot(r.x + fx * r.r, r.y + fy * r.r, fx, fy, now);
+        this.impactFx(r.x + (dx / d) * r.r, r.y + (dy / d) * r.r);
+      }
+      // whatever is in the way is knocked off to the side, never carried along
       let side = dx * lx + dy * ly;
-      if (Math.abs(side) < 3) side = p.id % 2 ? 1 : -1; // dead ahead: pick a side
+      if (Math.abs(side) < 3) side = p.id % 2 ? 1 : -1;
       const sg = Math.sign(side);
       let vf = b.velocity.x * fx + b.velocity.y * fy;
       let vl = b.velocity.x * lx + b.velocity.y * ly;
-      if (along > 0) vf = Math.max(vf, speed * 0.8); // pushed ahead, while the rogue still gains on it…
-      vl = sg * Math.max(vl * sg, 4 + overlap * 0.3); // …so it slides around the front and off to the side
+      if (dx * fx + dy * fy > 0) vf = Math.max(vf, speed * 0.85);
+      vl = sg * Math.max(vl * sg, 7 + overlap * 0.4);
+      this.matter.body.setVelocity(b, { x: fx * vf + lx * vl, y: fy * vf + ly * vl });
       if (!r.hits.has(p.id)) {
         r.hits.add(p.id);
-        vl += sg * Math.random() * 3; // a little randomness, so the field scatters differently every time
-        vf += Math.random() * 2;
         p.squash(Math.atan2(dy, dx), MAX_SQUASH);
-        p.scatterUntil = now + 1600;
-        p.born = now;
-        if (r.hits.size % 3 === 1) {
-          Sfx.land(speed * 2);
+        if (r.hits.size % 2 === 1) {
+          Sfx.land(16, p.r);
           Haptics.medium();
         }
-      }
-      this.matter.body.setVelocity(b, { x: fx * vf + lx * vl, y: fy * vf + ly * vl });
-      if (!r.impacted) {
-        r.impacted = true;
-        this.calmUntil = now + 6500; // no game over while everything is still flying around
-        this.gravBoostUntil = now + 4500; // and gravity gathers it all back a little faster
-        this.shockwave(r.x, r.y, 460, 5);
-        this.cameras.main.shake(450, 0.018);
-        Sfx.boom();
-        Haptics.success();
       }
     }
     // gone once it is well past the field and moving away
@@ -985,25 +1012,53 @@ export class GameScene extends Phaser.Scene {
     const ey = r.y - CY;
     if (ex * ex + ey * ey > 950 * 950 && ex * r.vx + ey * r.vy > 0) {
       r.destroy();
-      this.rogue = null;
+      this.wrecker = null;
     }
-    return speed;
   }
 
-  emitEmbers() {
-    const r = this.rogue;
+  /** The moment of impact: shock rings, a flash and flying shards instead of a big screen shake, so nothing is hidden. */
+  impactFx(x, y) {
+    const at = this.toScreen(x, y);
+    [
+      [0, 0xffffff, 560, 8],
+      [70, 0x9a88ff, 720, 6],
+    ].forEach(([delay, color, to, w]) => {
+      const ring = this.add.circle(at.x, at.y, 30).setStrokeStyle(w, color, 0.9).setDepth(FX);
+      this.tweens.add({ targets: ring, radius: to, alpha: 0, delay, duration: 560, ease: 'Cubic.out', onComplete: () => ring.destroy() });
+    });
+    const flash = this.add.image(at.x, at.y, 'soft').setTint(0xddd2ff).setBlendMode(Phaser.BlendModes.ADD).setScale(1 / TEX_SCALE).setDepth(FX);
+    this.tweens.add({ targets: flash, scale: 6 / TEX_SCALE, alpha: 0, duration: 380, ease: 'Cubic.out', onComplete: () => flash.destroy() });
+    for (let i = 0; i < 22; i++) {
+      const a = Math.random() * Math.PI * 2;
+      const d = 90 + Math.random() * 220;
+      const shard = this.add
+        .image(at.x, at.y, i % 3 ? 'dot' : 'spark')
+        .setDepth(FX)
+        .setTint(i % 2 ? 0xb7a8ff : 0x2a2340)
+        .setScale((0.4 + Math.random() * 0.7) / TEX_SCALE)
+        .setRotation(Math.random() * 6);
+      if (i % 2) shard.setBlendMode(Phaser.BlendModes.ADD);
+      this.tweens.add({ targets: shard, x: at.x + Math.cos(a) * d, y: at.y + Math.sin(a) * d, alpha: 0, angle: 200, duration: 600 + Math.random() * 400, ease: 'Cubic.out', onComplete: () => shard.destroy() });
+    }
+    this.cameras.main.shake(140, 0.0035); // just a nudge
+    Sfx.darkImpact();
+    Haptics.success();
+  }
+
+  emitDarkDust() {
+    const r = this.wrecker;
     if (!r) return;
     const at = this.toScreen(r.x, r.y);
     const back = r.tailAngle + this.worldRot + Math.PI;
     for (let i = 0; i < 2; i++) {
-      const a = back + (Math.random() - 0.5) * 1.6;
-      const d = r.r * (0.6 + Math.random() * 0.4);
+      const a = back + (Math.random() - 0.5) * 1.4;
+      const d = r.r * (0.7 + Math.random() * 0.4);
       const e = this.add
         .image(at.x + Math.cos(a) * d, at.y + Math.sin(a) * d, i ? 'dot' : 'spark')
         .setDepth(19)
-        .setTint(Math.random() < 0.5 ? 0xff6a3d : 0xff5ad8)
-        .setBlendMode(Phaser.BlendModes.ADD)
+        .setTint(i ? 0x1c1630 : 0xa898ff)
         .setScale((0.4 + Math.random() * 0.6) / TEX_SCALE);
+      if (!i) e.setBlendMode(Phaser.BlendModes.ADD);
       this.tweens.add({
         targets: e,
         x: e.x + Math.cos(back) * (40 + Math.random() * 60),
@@ -1023,8 +1078,11 @@ export class GameScene extends Phaser.Scene {
     const list = this.pieces;
     const n = list.length;
     const crunch = this.state === 'crunch';
-    const g = GRAVITY * (crunch ? 2.6 : now < this.gravBoostUntil ? 1.7 : 1);
+    const scattering = now < this.scatterUntil;
+    const g = GRAVITY * (crunch ? 2.6 : scattering ? 0.7 : now < this.gravBoostUntil ? 2 : 1);
     const swirl = crunch ? 0.45 : 0;
+    const damping = scattering ? BOUNCY_DAMPING : SKIN_DAMPING;
+    const restitution = scattering ? BOUNCY_RESTITUTION : 0.12;
     let maxTier = -1;
     for (const p of list) {
       if (p.tier > maxTier) maxTier = p.tier;
@@ -1035,10 +1093,38 @@ export class GameScene extends Phaser.Scene {
       const f = (g * Math.min(1, d / 40) * b.mass) / STEP2 / d;
       b.force.x += (dx - dy * swirl) * f;
       b.force.y += (dy + dx * swirl) * f;
-      const drag = p.flying ? FLIGHT_DRAG : now < p.scatterUntil ? SCATTER_DRAG : DRAG;
+      const drag = p.flying ? FLIGHT_DRAG : scattering ? SCATTER_DRAG : DRAG;
       if (b.frictionAir !== drag) b.frictionAir = drag;
+      if (b.restitution !== restitution) b.restitution = restitution;
     }
     this.maxTier = maxTier;
+
+    // the screen edges are walls: a planet flung out bounces back instead of leaving the screen
+    const cr = Math.cos(this.worldRot);
+    const sr = Math.sin(this.worldRot);
+    for (const p of list) {
+      const b = p.body;
+      const dx = b.position.x - CX;
+      const dy = b.position.y - CY;
+      const sx = CX + dx * cr - dy * sr;
+      const sy = CY + dx * sr + dy * cr;
+      const walls = [];
+      if (sx < WALL_SIDE + p.r) walls.push(1, 0, WALL_SIDE + p.r - sx);
+      else if (sx > W - WALL_SIDE - p.r) walls.push(-1, 0, sx - (W - WALL_SIDE - p.r));
+      if (sy < WALL_TOP + p.r) walls.push(0, 1, WALL_TOP + p.r - sy);
+      else if (sy > WALL_BOTTOM - p.r) walls.push(0, -1, sy - (WALL_BOTTOM - p.r));
+      for (let w = 0; w < walls.length; w += 3) {
+        // the wall's inward normal, turned from screen into field coordinates
+        const fx = walls[w] * cr + walls[w + 1] * sr;
+        const fy = -walls[w] * sr + walls[w + 1] * cr;
+        const vn = b.velocity.x * fx + b.velocity.y * fy;
+        if (vn < 0) {
+          this.matter.body.setVelocity(b, { x: b.velocity.x - 1.6 * vn * fx, y: b.velocity.y - 1.6 * vn * fy });
+          if (-vn > 2) p.squash(Math.atan2(fy, fx), Math.min(MAX_SQUASH, -vn * IMPACT_SQUASH * 2));
+        }
+        this.matter.body.setPosition(b, { x: b.position.x + fx * walls[w + 2], y: b.position.y + fy * walls[w + 2] });
+      }
+    }
 
     // a planet that reaches the centre without touching anything is caught by the well
     // and eases to rest there, instead of flying straight through and out the other side
@@ -1061,7 +1147,7 @@ export class GameScene extends Phaser.Scene {
       }
     }
 
-    if (this.rogue) this.stepRogue(now);
+    if (this.wrecker) this.stepWrecker(now);
 
     const previous = this.contacts;
     const contacts = new Set();
@@ -1097,7 +1183,7 @@ export class GameScene extends Phaser.Scene {
         // springy skin: pushes back harder the deeper it is pressed
         const reduced = (a.mass * b.mass) / (a.mass + b.mass);
         const depth = Math.min(1, overlap / (sum * (1 - CORE)));
-        let force = reduced * (SKIN_SPRING * overlap * (1 + 1.5 * depth * depth) - SKIN_DAMPING * vn);
+        let force = reduced * (SKIN_SPRING * overlap * (1 + 1.5 * depth * depth) - damping * vn);
         if (force > 0) {
           force /= STEP2;
           a.force.x -= nx * force;
@@ -1139,11 +1225,9 @@ export class GameScene extends Phaser.Scene {
     p.flying = false;
     if (p.body) p.body.frictionAir = DRAG;
     if (closing <= 2) return;
-    Sfx.land(closing);
-    if (closing > 18) {
-      Haptics.heavy();
-      this.cameras.main.shake(90, 0.002 + closing * 0.0001);
-    } else if (closing > 9) Haptics.medium();
+    Sfx.land(closing, p.r);
+    if (closing > 18) Haptics.heavy();
+    else if (closing > 9) Haptics.medium();
     else Haptics.light();
   }
 
@@ -1256,7 +1340,7 @@ export class GameScene extends Phaser.Scene {
       this.addScore(total);
       this.mergeFx(x, y, shown, total);
       this.shockwave(x, y, TIERS[shown].r + 70, 2.2);
-      Sfx.star();
+      Sfx.cometHit();
       Haptics.heavy();
     }
   }
@@ -1266,7 +1350,7 @@ export class GameScene extends Phaser.Scene {
     this.energy += n;
     if (this.energy >= this.cometCost()) {
       this.cometPending = true;
-      Sfx.star();
+      Sfx.cometReady();
       Haptics.medium();
       this.tweens.add({ targets: this.meterIcon, scale: { from: 44 / PORTRAIT_R / TEX_SCALE, to: 22 / PORTRAIT_R / TEX_SCALE }, duration: 400, ease: 'Back.out' });
       this.meterLabel.setText('READY!').setColor('#7fe3ff');
@@ -1304,8 +1388,8 @@ export class GameScene extends Phaser.Scene {
     this.gravY = y;
     this.tweens.add({ targets: this.coreParts, alpha: 0.15, duration: 400 });
     if (!this.discover(HOLE)) this.banner('BLACK HOLE!', 'Everything falls in…', '#ffb347');
-    this.cameras.main.shake(500, 0.012);
-    Sfx.boom();
+    this.cameras.main.shake(300, 0.005);
+    Sfx.blackHole();
     Haptics.success();
   }
 
@@ -1360,7 +1444,7 @@ export class GameScene extends Phaser.Scene {
     this.tweens.add({ targets: flash, scale: 16 / TEX_SCALE, alpha: 0, duration: 700, ease: 'Cubic.out', onComplete: () => flash.destroy() });
     this.banner(`UNIVERSE ${this.universe}`, `All scores ×${this.universe}`, '#7fe3ff');
     this.cameras.main.flash(300, 255, 255, 255);
-    Sfx.discover();
+    Sfx.universe();
     Haptics.success();
     if (this.held) this.state = 'aim';
     else {
@@ -1407,7 +1491,7 @@ export class GameScene extends Phaser.Scene {
       this.tweens.add({ targets: this.comboText, scale: 1, duration: 150 });
       this.tweens.add({ targets: this.comboText, alpha: 0, delay: 800, duration: 300 });
     }
-    if (tier >= 4) this.cameras.main.shake(120, 0.003 + tier * 0.0007);
+    if (tier >= 6) this.cameras.main.shake(100, 0.0015 + tier * 0.0002);
   }
 
   /** A card that drops in under the top bar, so it never hides the centre of the field. */
@@ -1435,7 +1519,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   showDiscovery(tier) {
-    Sfx.discover();
+    Sfx.discover(tier);
     Haptics.success();
     this.banner('NEW DISCOVERY', TIERS[tier].name, '#ffd93d', tier);
     for (let i = 0; i < 22; i++) {
@@ -1482,7 +1566,7 @@ export class GameScene extends Phaser.Scene {
         this.checkPieces(now, delta);
         if (this.state === 'flying' && now >= this.nextHeldAt) this.prepareHeld();
       }
-      if (this.rogue && steps > 0) this.emitEmbers();
+      if (this.wrecker && steps > 0) this.emitDarkDust();
     }
     this.backLayer.rotation = this.worldRot;
     this.batch.rotation = this.worldRot;
@@ -1490,11 +1574,17 @@ export class GameScene extends Phaser.Scene {
     this.updateHeld();
     this.renderPlanets(delta, now);
     this.drawAim(now);
+    this.drawDanger(now);
     this.drawBeam(now);
   }
 
+  /**
+   * The lose rule: a planet resting clearly outside the ring for 3 seconds ends the game.
+   * Each planet counts down on its own, with a ring, a number, a beep and a buzz every second,
+   * and the count winds back down when it gets back inside.
+   */
   checkPieces(now, delta) {
-    let worst = 0;
+    let worst = null;
     const calm = now < this.calmUntil;
     for (const p of [...this.pieces]) {
       const age = now - p.born;
@@ -1507,16 +1597,63 @@ export class GameScene extends Phaser.Scene {
         }
         continue;
       }
-      const reach = Math.hypot(p.x - CX, p.y - CY) + p.r;
+      const over = Math.hypot(p.x - CX, p.y - CY) + p.r - R_LIMIT;
       const v = p.body.velocity;
-      if (calm || age < SETTLE_MS || reach <= R_LIMIT) p.dangerMs = 0;
-      else if (Math.hypot(v.x, v.y) < SETTLED_SPEED) p.dangerMs += delta; // knocked-out planets get time to fall back
-      if (p.dangerMs > worst) worst = p.dangerMs;
+      if (calm || age < SETTLE_MS) p.dangerMs = 0;
+      else if (over > DANGER_MARGIN && Math.hypot(v.x, v.y) < SETTLED_SPEED) p.dangerMs += delta;
+      else if (over <= 0) p.dangerMs = Math.max(0, p.dangerMs - delta * 2);
+      if (p.dangerMs > 0) {
+        const left = Math.max(1, Math.ceil((DANGER_LIMIT_MS - p.dangerMs) / 1000));
+        if (p.dangerSec === undefined || left < p.dangerSec) {
+          Sfx.danger(left);
+          if (left <= 1) Haptics.heavy();
+          else Haptics.medium();
+          if (p.dangerSec === undefined && !store.get('jd2_danger_tip', false)) {
+            store.set('jd2_danger_tip', true);
+            this.banner('KEEP PLANETS INSIDE', '3 seconds outside the ring ends the game', '#ff8fa3');
+          }
+        }
+        p.dangerSec = left;
+      } else {
+        p.dangerSec = undefined;
+      }
+      if (p.dangerMs > 0 && (!worst || p.dangerMs > worst.dangerMs)) worst = p;
     }
-    const danger = worst > 0;
-    if (danger !== (this.limitColor === 0xff5d73)) this.drawLimitRing(danger ? 0xff5d73 : 0xb9a8e6);
-    this.limitRing.setAlpha(danger ? 0.55 + 0.45 * Math.abs(Math.sin(now / 90)) : 0.4);
-    if (worst > DANGER_LIMIT_MS) this.gameOver();
+    const danger = !!worst;
+    if (danger !== (this.limitColor === 0xff5d73)) this.drawLimitRing(danger ? 0xff5d73 : 0xc9bcff);
+    this.limitRing.setAlpha(danger ? 0.6 + 0.4 * Math.abs(Math.sin(now / 110)) : 0.55);
+    this.worstDanger = worst;
+    if (worst && worst.dangerMs > DANGER_LIMIT_MS) this.gameOver(worst);
+  }
+
+  /** A shrinking red ring and a number on each planet that is about to end the game. */
+  drawDanger(now) {
+    const g = this.dangerGfx;
+    g.clear();
+    const list = this.state === 'over' ? (this.culprit ? [this.culprit] : []) : this.pieces.filter((p) => p.dangerMs > 0);
+    const pulse = 0.55 + 0.45 * Math.abs(Math.sin(now / 120));
+    for (const p of list) {
+      const at = this.toScreen(p.x, p.y);
+      const r = p.rv + 10;
+      const left = this.state === 'over' ? 0 : 1 - Math.min(1, p.dangerMs / DANGER_LIMIT_MS);
+      g.lineStyle(10, 0xff4d6d, 0.25 * pulse);
+      g.strokeCircle(at.x, at.y, r + 4);
+      g.lineStyle(6, 0xff4d6d, this.state === 'over' ? pulse : 0.95);
+      if (left > 0) {
+        g.beginPath();
+        g.arc(at.x, at.y, r, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * left, false);
+        g.strokePath();
+      } else {
+        g.strokeCircle(at.x, at.y, r);
+      }
+    }
+    const w = this.state === 'over' ? null : this.worstDanger;
+    if (w && w.body) {
+      const at = this.toScreen(w.x, w.y);
+      this.dangerLabel.setVisible(true).setPosition(at.x, at.y).setText(String(w.dangerSec ?? 3)).setScale(0.9 + 0.15 * pulse);
+    } else {
+      this.dangerLabel.setVisible(false);
+    }
   }
 
   renderPlanets(delta, now) {
@@ -1546,8 +1683,8 @@ export class GameScene extends Phaser.Scene {
         b.planes.push(-nx, -ny, d - da);
       }
     }
-    // planets pressed by the rogue planet flatten against it
-    const r = this.rogue;
+    // planets pressed by the dark matter ball flatten against it
+    const r = this.wrecker;
     if (r) {
       for (const p of list) {
         const dx = p.x - r.x;
@@ -1591,14 +1728,22 @@ export class GameScene extends Phaser.Scene {
 
   // ---------- game over, revive, ads ----------
 
-  gameOver() {
+  /** culprit: the planet that stayed outside the ring. It is pointed out before the results appear. */
+  gameOver(culprit = null) {
     this.state = 'over';
+    this.culprit = culprit;
     this.aiming = false;
     this.setPower(0);
     if (this.targeting) this.cancelTargeting();
     Sfx.gameOver();
     Haptics.heavy();
-    this.showGameOver();
+    if (culprit) {
+      const at = this.toScreen(culprit.x, culprit.y);
+      this.floatText(Phaser.Math.Clamp(at.x, 170, W - 170), at.y - culprit.rv - 24, 'Outside the ring!', '#ff8fa3', 30);
+      this.time.delayedCall(1200, () => this.showGameOver());
+    } else {
+      this.showGameOver();
+    }
   }
 
   button(x, y, w, h, label, color, onClick, fontSize = 30) {
@@ -1642,6 +1787,7 @@ export class GameScene extends Phaser.Scene {
     add(this.text(W / 2, 400, String(this.score), 92, '#ffd93d').setOrigin(0.5));
     const isBest = this.score > 0 && this.score >= this.best;
     add(this.text(W / 2, 474, isBest ? 'NEW BEST!' : 'BEST ' + this.best, 26, isBest ? '#8ce99a' : '#b9a8e6').setOrigin(0.5));
+    if (this.culprit) add(this.text(W / 2, 506, `A ${TIERS[this.culprit.tier].name} stayed outside the ring`, 20, '#ff9fb2').setOrigin(0.5));
 
     if (!hasKindTextures(this, this.biggest)) makeKindTextures(this, this.biggest);
     add(this.portrait(W / 2 - 150, 570, this.biggest, 38));
@@ -1686,14 +1832,17 @@ export class GameScene extends Phaser.Scene {
   /** Reward for watching an ad: the outer shell is blown away and play continues. */
   revive() {
     this.revived = true;
+    this.culprit = null;
     for (const p of [...this.pieces]) {
       if (Math.hypot(p.x - CX, p.y - CY) + p.r > R_LIMIT * 0.62) {
         this.mergeFx(p.x, p.y, Math.max(0, p.tier), 0);
         this.removePiece(p);
       } else {
         p.dangerMs = 0;
+        p.dangerSec = undefined;
       }
     }
+    this.calmUntil = this.time.now + 1500;
     this.mergeQueue.length = 0;
     this.cometQueue.length = 0;
     this.combo = 0;
@@ -1742,10 +1891,8 @@ export class GameScene extends Phaser.Scene {
       this.lastMergeAt += pausedFor;
       this.calmUntil += pausedFor;
       this.gravBoostUntil += pausedFor;
-      for (const p of this.pieces) {
-        p.born += pausedFor;
-        if (p.scatterUntil) p.scatterUntil += pausedFor;
-      }
+      this.scatterUntil += pausedFor;
+      for (const p of this.pieces) p.born += pausedFor;
       this.state = before;
     });
     items.push(close);

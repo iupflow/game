@@ -28,13 +28,16 @@ npm run build    # production build in dist/
   the springs that make its picture squash, stretch and wobble
 - `src/PlanetBatch.js` – draws planets as deforming textured meshes (WebGL)
 - `src/art.js` – the chain and all procedural art (no image files). Planet surfaces are
-  rendered per pixel as noise-textured spheres; a separate lighting layer adds the
-  day/night terminator, atmosphere glow and highlight, and stays fixed while planets turn.
-  The small bodies are textured before the first frame, the big ones in the background
+  rendered per pixel as softly textured spheres in a gentle, stylised palette; a separate
+  light layer adds a rim glow and a glossy highlight (no dark side) and stays fixed while
+  planets turn. The small bodies are textured before the first frame, the big ones in the
+  background
 - `src/ads.js` – ad and purchase layer. Uses placeholder overlays in the browser;
   replace the `platform` functions with real SDK calls for the store build
 - `src/haptics.js` – vibration (Capacitor Haptics in the store build, browser fallbacks)
-- `src/sfx.js` – synthesized sound effects
+- `src/sfx.js` – synthesized sound (Web Audio, no files): a different merge sound for every
+  planet, all on one pentatonic scale so merges and combos sound musical, plus a compressor
+  and a small reverb
 
 ## Game systems
 
@@ -53,13 +56,20 @@ npm run build    # production build in dist/
   line turns red beforehand), and each comet costs more charge than the last, so
   comets help smaller planets catch up but cannot carry one planet to a black hole
 - Orbital laser booster: pick any planet and a satellite vaporizes it
-- Rogue planet booster: a huge wandering planet crosses the field and knocks everything
-  aside; gravity then gathers the planets back into a new arrangement
+- Smash booster: a deep-black ball of dark matter crashes in like a billiards break shot.
+  Every planet flies apart, bouncing off each other and off the screen edges, then gravity
+  gathers them back into a new, random arrangement
 - One of each booster per game, more through rewarded ads
 - Buttons only react when the press starts on them, so a pull that ends over the bottom
   bar never triggers it
 - Swap: tap the NEXT planet to exchange it with the one waiting on the ring
 - The field slowly rotates, so timing matters
+
+## Losing
+
+A planet resting clearly outside the dashed ring for 3 seconds ends the game. Each planet
+counts down on its own with a red ring, a number, a beep and a buzz every second, and the
+count winds back down if it gets back inside. The game-over screen names the planet.
 
 ## Monetization flow
 
