@@ -433,7 +433,7 @@ export class GameScene extends Phaser.Scene {
     this.limitRing = this.add.graphics();
     this.ringTrail = this.add.graphics().setBlendMode(Phaser.BlendModes.ADD);
     // a few lights run round the ring all the time
-    this.ringLights = [0, 1, 2].map(() => this.add.image(0, 0, 'soft').setScale(0.2 / TEX_SCALE).setBlendMode(Phaser.BlendModes.ADD));
+    this.ringLights = [0, 1, 2].map(() => this.add.image(0, 0, 'soft').setScale(0.15 / TEX_SCALE).setBlendMode(Phaser.BlendModes.ADD));
     const well = this.add.image(0, 0, 'soft').setScale(2.6 / TEX_SCALE).setTint(0x9f6bff).setAlpha(0.55).setBlendMode(Phaser.BlendModes.ADD);
     this.tweens.add({ targets: well, scale: 3.3 / TEX_SCALE, alpha: 0.3, duration: 1500, yoyo: true, repeat: -1, ease: 'Sine.inOut' });
     // the heart of the well
@@ -459,7 +459,7 @@ export class GameScene extends Phaser.Scene {
     const f = this.ringFlash;
     const base = this.ringDanger ? 0xff5d73 : ringColor(this.runMax);
     const color = f > 0 ? mix(base, this.ringFlashColor, f * 0.8) : base;
-    const width = 4 + 5 * f;
+    const width = 4 + 2 * f;
     const key = `${R.toFixed(1)}|${color}|${width.toFixed(1)}`;
     if (key !== this.ringKey) {
       this.ringKey = key;
@@ -475,9 +475,9 @@ export class GameScene extends Phaser.Scene {
       }
       const gl = this.ringGlow;
       gl.clear();
-      gl.lineStyle(20 + 34 * f, color, 0.05 + 0.2 * f);
+      gl.lineStyle(16 + 6 * f, color, 0.05 + 0.08 * f);
       gl.strokeCircle(0, 0, R);
-      gl.lineStyle(9 + 10 * f, color, 0.08 + 0.3 * f);
+      gl.lineStyle(8 + 3 * f, color, 0.08 + 0.14 * f);
       gl.strokeCircle(0, 0, R);
     }
     if (Math.abs(R - this.ringDrawnAt) > 0.25) {
@@ -504,9 +504,9 @@ export class GameScene extends Phaser.Scene {
       lights[i]
         .setPosition(Math.cos(a) * R, Math.sin(a) * R)
         .setTint(color)
-        .setAlpha(0.55 + 0.35 * f + 0.25 * Math.sin(now / 260 + i * 2));
+        .setAlpha(0.5 + 0.25 * f + 0.2 * Math.sin(now / 260 + i * 2));
       for (let k = 0; k < 7; k++) {
-        t.lineStyle(3 + 2 * f, color, 0.42 * (1 - k / 7));
+        t.lineStyle(2.5 + f, color, 0.4 * (1 - k / 7));
         t.beginPath();
         t.arc(0, 0, R, a - (k + 1) * 0.045, a - k * 0.045, false);
         t.strokePath();
@@ -525,52 +525,49 @@ export class GameScene extends Phaser.Scene {
     const color = ringColor(this.runMax);
     this.ringFlash = 1;
     this.ringFlashColor = 0xffffff;
-    this.ringSpinV = 5;
-    // two waves run out past the new edge: they move fast at first, and stay bright until late
-    for (const [width, alpha, past, ms, tint] of [[6, 1, 40, 900, 0xffffff], [26, 0.45, 72, 1300, color]]) {
-      const wave = this.add.circle(CX, CY, from).setStrokeStyle(width, tint, alpha).setDepth(FX).setBlendMode(Phaser.BlendModes.ADD);
-      this.tweens.add({
-        targets: wave,
-        props: { radius: { value: to + past, ease: 'Cubic.out' }, alpha: { value: 0, ease: 'Quad.in' } },
-        duration: ms,
-        onComplete: () => wave.destroy(),
-      });
-    }
-    // sparks burst out of the whole ring
-    const n = 44;
+    this.ringSpinV = 2.5;
+    // one fine wave that slips just past the new edge
+    const wave = this.add.circle(CX, CY, from).setStrokeStyle(2.5, 0xffffff, 0.9).setDepth(FX).setBlendMode(Phaser.BlendModes.ADD);
+    this.tweens.add({
+      targets: wave,
+      props: { radius: { value: to + 12, ease: 'Cubic.out' }, alpha: { value: 0, ease: 'Quad.in' } },
+      duration: 650,
+      onComplete: () => wave.destroy(),
+    });
+    // small sparkles twinkle along the ring and drift a little outward
+    const n = 24;
     for (let i = 0; i < n; i++) {
-      const a = (i / n) * Math.PI * 2 + Math.random() * 0.1;
-      const r1 = to + 30 + Math.random() * 60;
-      const star = i % 3 === 0;
+      const a = (i / n) * Math.PI * 2 + Math.random() * 0.2;
+      const r1 = to + 4 + Math.random() * 12;
       const sp = this.add
-        .image(CX + Math.cos(a) * from, CY + Math.sin(a) * from, star ? 'spark' : 'dot')
+        .image(CX + Math.cos(a) * from, CY + Math.sin(a) * from, i % 3 === 0 ? 'spark' : 'dot')
         .setTint(i % 2 ? color : 0xffffff)
-        .setScale((star ? 0.95 : 0.75) / TEX_SCALE)
+        .setScale((i % 3 === 0 ? 0.4 : 0.28) / TEX_SCALE)
         .setDepth(FX)
         .setBlendMode(Phaser.BlendModes.ADD);
       this.tweens.add({
         targets: sp,
         props: {
-          x: { value: CX + Math.cos(a) * r1, ease: 'Cubic.out' },
-          y: { value: CY + Math.sin(a) * r1, ease: 'Cubic.out' },
+          x: { value: CX + Math.cos(a + 0.12) * r1, ease: 'Cubic.out' },
+          y: { value: CY + Math.sin(a + 0.12) * r1, ease: 'Cubic.out' },
           alpha: { value: 0, ease: 'Quad.in' },
-          scale: { value: 0.15 / TEX_SCALE, ease: 'Quad.in' },
-          angle: { value: 200, ease: 'Linear' },
+          scale: { value: 0.06 / TEX_SCALE, ease: 'Quad.in' },
         },
-        duration: 850 + Math.random() * 450,
+        delay: Math.random() * 120,
+        duration: 520 + Math.random() * 260,
         onComplete: () => sp.destroy(),
       });
     }
-    const y = Math.max(372, CY - to - 30);
-    const label = this.text(CX, y, 'RING UP', 30, '#' + color.toString(16).padStart(6, '0'))
+    const y = Math.max(372, CY - to - 22);
+    const label = this.text(CX, y, 'RING UP', 20, '#' + color.toString(16).padStart(6, '0'))
       .setOrigin(0.5)
       .setDepth(FX + 1)
-      .setStroke('#150a33', 6)
-      .setScale(0.4);
-    this.tweens.add({ targets: label, scale: 1, duration: 280, ease: 'Back.out' });
-    this.tweens.add({ targets: label, y: y - 34, alpha: 0, delay: 700, duration: 450, ease: 'Cubic.in', onComplete: () => label.destroy() });
+      .setStroke('#150a33', 5)
+      .setScale(0.6);
+    this.tweens.add({ targets: label, scale: 1, duration: 240, ease: 'Back.out' });
+    this.tweens.add({ targets: label, y: y - 16, alpha: 0, delay: 650, duration: 400, ease: 'Cubic.in', onComplete: () => label.destroy() });
     Sfx.ringGrow();
-    Haptics.medium();
+    Haptics.light();
   }
 
   buildHud() {
@@ -2031,7 +2028,7 @@ export class GameScene extends Phaser.Scene {
     this.reviveRing = 0;
     this.ringFlash = 0.8;
     this.ringFlashColor = 0x7fe3ff;
-    this.ringSpinV = -4;
+    this.ringSpinV = -2;
     this.nextKind = this.rollTier();
     this.refreshNext();
     this.tweens.add({ targets: this.coreParts, alpha: 1, duration: 600 });
@@ -2078,69 +2075,71 @@ export class GameScene extends Phaser.Scene {
       }
     }
 
-    const bloom = this.add.image(x, y, 'soft').setTint(light).setBlendMode(ADD).setDepth(FX).setScale((rs * 0.8) / 64 / TEX_SCALE);
+    // a soft glow that stays close to the new body
+    const bloom = this.add.image(x, y, 'soft').setTint(light).setBlendMode(ADD).setDepth(FX).setAlpha(0.7).setScale((rs * 0.7) / 64 / TEX_SCALE);
     this.tweens.add({
       targets: bloom,
-      props: { scale: { value: (rs * (2.2 + big)) / 64 / TEX_SCALE, ease: 'Cubic.out' }, alpha: { value: 0, ease: 'Quad.in' } },
-      duration: 450 + big * 350,
+      props: { scale: { value: (rs * (1.35 + 0.2 * big)) / 64 / TEX_SCALE, ease: 'Cubic.out' }, alpha: { value: 0, ease: 'Quad.in' } },
+      duration: 320 + big * 160,
       onComplete: () => bloom.destroy(),
     });
 
-    for (const [width, tint, alpha, grow, ms] of [[5, 0xffffff, 0.95, 1.9, 380], [14, color, 0.5, 2.6 + big, 600 + big * 300]]) {
-      const ring = this.add.circle(x, y, rs).setStrokeStyle(width, tint, alpha).setDepth(FX).setBlendMode(ADD);
-      this.tweens.add({
-        targets: ring,
-        props: { radius: { value: rs * grow, ease: 'Cubic.out' }, alpha: { value: 0, ease: 'Quad.in' } },
-        duration: ms,
-        onComplete: () => ring.destroy(),
-      });
-    }
+    // one fine ring hugging the new body
+    const ring = this.add.circle(x, y, rs * 0.95).setStrokeStyle(2.5, light, 0.9).setDepth(FX).setBlendMode(ADD);
+    this.tweens.add({
+      targets: ring,
+      props: { radius: { value: rs * (1.3 + 0.15 * big), ease: 'Cubic.out' }, alpha: { value: 0, ease: 'Quad.in' } },
+      duration: 360 + big * 160,
+      onComplete: () => ring.destroy(),
+    });
 
-    const n = 10 + tier * 2 + boost * 6;
+    // a few small sparks, just past the edge
+    const n = Math.min(18, 6 + tier + boost * 2);
     for (let i = 0; i < n; i++) {
-      const ang = (i / n) * Math.PI * 2 + Math.random() * 0.4;
-      const star = i % 3 === 0;
+      const ang = (i / n) * Math.PI * 2 + Math.random() * 0.5;
+      const star = i % 4 === 0;
       const d = this.add
-        .image(x + Math.cos(ang) * rs * 0.6, y + Math.sin(ang) * rs * 0.6, star ? 'spark' : 'dot')
+        .image(x + Math.cos(ang) * rs * 0.85, y + Math.sin(ang) * rs * 0.85, star ? 'spark' : 'dot')
         .setTint(i % 2 ? color : light)
-        .setScale(((star ? 0.7 : 0.55) + Math.random() * 0.5) / TEX_SCALE)
+        .setScale(((star ? 0.42 : 0.3) + Math.random() * 0.15) / TEX_SCALE)
         .setDepth(FX)
         .setBlendMode(ADD);
-      const dist = rs + 34 + Math.random() * (50 + big * 70);
+      const dist = rs + 8 + Math.random() * (14 + big * 10);
       this.tweens.add({
         targets: d,
         props: {
           x: { value: x + Math.cos(ang) * dist, ease: 'Cubic.out' },
           y: { value: y + Math.sin(ang) * dist, ease: 'Cubic.out' },
           alpha: { value: 0, ease: 'Quad.in' },
-          scale: { value: 0.12 / TEX_SCALE, ease: 'Quad.in' },
-          angle: { value: 220, ease: 'Linear' },
+          scale: { value: 0.08 / TEX_SCALE, ease: 'Quad.in' },
+          angle: { value: 120, ease: 'Linear' },
         },
-        duration: 520 + Math.random() * 300 + big * 300,
+        duration: 380 + Math.random() * 180 + big * 120,
         onComplete: () => d.destroy(),
       });
     }
 
-    if (tier >= 4) {
+    // for the stars, short fine rays that turn a little as they fade
+    if (tier >= 9) {
       const rays = this.add.graphics().setPosition(x, y).setDepth(FX).setBlendMode(ADD);
-      const k = 8 + Math.round(big * 6);
-      const inner = rs * 0.5;
-      const len = rs * (1.8 + big);
+      const k = 8;
+      const inner = rs * 0.9;
+      const len = rs * 1.35;
       for (let i = 0; i < k; i++) {
         const a = (i / k) * Math.PI * 2;
-        rays.fillStyle(i % 2 ? light : 0xffffff, 0.5);
+        rays.fillStyle(light, 0.45);
         rays.beginPath();
-        rays.moveTo(Math.cos(a - 0.09) * inner, Math.sin(a - 0.09) * inner);
+        rays.moveTo(Math.cos(a - 0.035) * inner, Math.sin(a - 0.035) * inner);
         rays.lineTo(Math.cos(a) * len, Math.sin(a) * len);
-        rays.lineTo(Math.cos(a + 0.09) * inner, Math.sin(a + 0.09) * inner);
+        rays.lineTo(Math.cos(a + 0.035) * inner, Math.sin(a + 0.035) * inner);
         rays.closePath();
         rays.fillPath();
       }
-      rays.setScale(0.6).setAlpha(0.9);
+      rays.setScale(0.9);
       this.tweens.add({
         targets: rays,
-        props: { scale: { value: 1.25, ease: 'Cubic.out' }, rotation: { value: 0.5, ease: 'Cubic.out' }, alpha: { value: 0, ease: 'Quad.in' } },
-        duration: 650 + big * 350,
+        props: { scale: { value: 1.08, ease: 'Cubic.out' }, rotation: { value: 0.25, ease: 'Cubic.out' }, alpha: { value: 0, ease: 'Quad.in' } },
+        duration: 520,
         onComplete: () => rays.destroy(),
       });
     }
@@ -2583,7 +2582,7 @@ export class GameScene extends Phaser.Scene {
     this.calmUntil = now + 2500;
     this.ringFlash = 1;
     this.ringFlashColor = 0x8ce99a;
-    this.ringSpinV = 7;
+    this.ringSpinV = 3;
     this.combo = 0;
     this.acc = 0;
     // the surge: waves of light run from the well out past the new edge

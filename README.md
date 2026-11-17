@@ -55,9 +55,9 @@ npm run build    # production build in dist/
   surface deforms, not only the outline
 - A planet that reaches the centre without touching anything is caught by the well
   and eases to rest there
-- Merges: the two planets rush into each other, light bursts out in the new body's colour,
-  a sharp white ring and a soft coloured ring run out and sparks fly. From Earth up, light
-  rays turn and fade too. All of it grows with the size of the new body and with the combo
+- Merges: the two planets rush into each other, and a small effect stays close to the new
+  body: a soft glow in its colour, one fine ring hugging it and a few small sparks just past
+  its edge (a few more on combos). Stars also get short, fine rays that turn as they fade
 - Album: only bodies already found are shown. Nothing about the rest is given away, not
   even that there is more
 - The ring grows with the biggest body made so far. Its size is exactly what the next step
@@ -69,8 +69,8 @@ npm run build    # production build in dist/
   (0.88 for the Supernova, 0.78 for the Pulsar). A new universe starts small again
 - The ring is alive: a soft glow, three lights with tails running round it, and a colour
   that moves from lavender through sky blue and mint (planets) to gold, orange, pink and
-  violet (stars). Every time it grows it flashes white and spins up, sparks burst out all
-  the way round, two waves run past the new edge and RING UP pops up in its new colour.
+  violet (stars). Every time it grows it brightens and turns a little, one fine wave slips
+  just past the new edge, small sparkles twinkle along it and a small RING UP appears.
   It pulses red, with racing lights, while a planet counts down, flashes green on a revive
   and cyan when a new universe begins
 - Laser booster: tap a planet, and a satellite vaporizes every planet of that kind, one
