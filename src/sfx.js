@@ -380,8 +380,22 @@ export const Sfx = {
     tone({ f: 190, f2: 120, dur: 0.14, gain: 0.12, type: 'triangle', wet: 0.1 });
   },
 
-  cometReady() {
+  /** The ring grows: a soft rising whoosh and an opening chord. */
+  ringGrow() {
+    noise({ dur: 0.7, gain: 0.05, type: 'bandpass', f: 300, f2: 2400, q: 1.6, attack: 0.15, wet: 0.5 });
+    [0, 4, 7].forEach((s, i) => tone({ f: note(7 + s), dur: 0.8, gain: 0.035, type: 'triangle', attack: 0.08, delay: 0.1 + i * 0.07, wet: 0.6 }));
+  },
+
+  /** A booster becomes available for the first time. */
+  unlock() {
     [0, 2, 4, 5, 7].forEach((s, i) => bell({ f: note(15 + s), dur: 0.6, gain: 0.05, delay: i * 0.06 }));
+  },
+
+  /** A revive: a deep surge that swells outward. */
+  revive() {
+    tone({ f: 70, f2: 140, dur: 1.1, gain: 0.16, attack: 0.1, wet: 0.4 });
+    noise({ dur: 1.2, gain: 0.07, type: 'bandpass', f: 200, f2: 3000, q: 1, attack: 0.2, wet: 0.6 });
+    [0, 2, 4, 7].forEach((s, i) => bell({ f: note(12 + s), dur: 1.2, gain: 0.06, delay: 0.35 + i * 0.09 }));
   },
 
   cometHit() {

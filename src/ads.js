@@ -68,11 +68,14 @@ function placeholderAd({ title, seconds, skippable }) {
 const platform = {
   showInterstitial: () => placeholderAd({ title: 'Advertisement', seconds: 3, skippable: false }),
   showRewarded: () => placeholderAd({ title: 'Watch to earn your reward', seconds: 4, skippable: true }),
-  purchaseRemoveAds: async () => window.__TEST_PURCHASE || window.confirm('Remove ads for $2.99? (test purchase, no charge)'),
+  purchasePremium: async () =>
+    window.__TEST_PURCHASE ||
+    window.confirm('Premium for $2.99: no ads, every booster at its maximum each game, and a free revive? (test purchase, no charge)'),
 };
 
 export const Ads = {
-  get removed() {
+  /** Premium, bought once: no interstitials, every booster at its per-game maximum, and a free revive. */
+  get premium() {
     return store.get('jd_noads', false);
   },
 
@@ -80,7 +83,7 @@ export const Ads = {
   async betweenGames() {
     const played = store.get('jd_games', 0) + 1;
     store.set('jd_games', played);
-    if (this.removed) return;
+    if (this.premium) return;
     if (played <= INTERSTITIAL_GRACE) return;
     if (played % INTERSTITIAL_EVERY !== 0) return;
     await platform.showInterstitial();
@@ -91,10 +94,15 @@ export const Ads = {
     return platform.showRewarded();
   },
 
-  /** One-time purchase that disables interstitials. Rewarded ads stay available. */
-  async purchaseRemoveAds() {
-    if (this.removed) return true;
-    const ok = await platform.purchaseRemoveAds();
+  /** Test builds only: undo a test purchase, so the free flow can be tried again. */
+  undoTestPurchase() {
+    if (typeof window !== 'undefined' && window.__TEST_PURCHASE) store.set('jd_noads', false);
+  },
+
+  /** The one-time Premium purchase. */
+  async purchasePremium() {
+    if (this.premium) return true;
+    const ok = await platform.purchasePremium();
     if (ok) store.set('jd_noads', true);
     return ok;
   },

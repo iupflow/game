@@ -25,10 +25,10 @@ const CX = W / 2; // the gravity well
 const CY = 640;
 const CAPTURE_R = 34; // a launched planet that reaches the centre untouched is caught here
 const CAPTURE_STEPS = 50;
-const R_LIMIT = 275; // the ring planets must stay inside, on screen
-const R_LAUNCH = 300; // planets wait on this orbit before launch, on screen
-// As bigger bodies appear the view pulls back, so the ring holds more space: by the biggest tier reached.
-const FIELD_SCALE = (tier) => (tier >= 13 ? 0.75 : tier >= 12 ? 0.85 : tier >= 11 ? 0.97 : 1);
+const RING_SCREEN_MAX = 275; // the ring grows on screen up to this; past it the view pulls back instead
+const ORBIT_GAP = 25; // planets wait on an orbit this far outside the ring, on screen
+const PACKING = 0.61; // how densely soft planets settle around the well (measured)
+const STRAYS = 4; // unmatched planets the ring leaves room for, on top of what the next merge needs
 const STEP = 1000 / 60;
 const STEP2 = STEP * STEP;
 const GRAVITY = 0.15; // pull toward the centre, in px per step^2
@@ -55,11 +55,22 @@ const WORLD_SPIN = 0.07; // the whole field slowly turns, radians per second
 const SHOT_COOLDOWN = 450;
 const DANGER_LIMIT_MS = 5000; // how long a planet may rest outside the ring
 const DANGER_MARGIN = 6; // a planet must be clearly outside, not just touching the line
-const REST_SPEED = 0.3; // slower than this counts as resting...
-const REST_MS = 450; // ...once it has stayed that slow this long
+const REST_DRIFT = 5; // a planet that stays within this distance of one spot is resting, even if it jiggles...
+const REST_MS = 450; // ...once it has stayed there this long
 const SETTLE_MS = 1000;
-const COMET_BASE = 150; // energy for the first comet of a game
-const COMET_STEP = 60; // every comet launched makes the next one cost this much more
+/**
+ * Booster uses per game, by strength. Free players start with `free` and can watch an ad for one
+ * more at a time until they have had `cap` in this game; premium players start every game at `cap`.
+ */
+const BOOSTERS = {
+  laser: { cap: 2, free: 1 },
+  fusion: { cap: 1, free: 0 }, // the strongest: every pair merges at once
+  vortex: { cap: 2, free: 1 },
+  smash: { cap: 2, free: 1 },
+  comet: { cap: 2, free: 1 },
+};
+const COMET_UNLOCK_TIER = 6; // the comet booster unlocks for good the first time this body is made
+const COMET_FLIGHT_MS = 430;
 const WRECKER_SPEED = 19; // px per step
 const LASER_CHARGE_MS = 420;
 const LASER_FIRST_MS = 520; // how long the beam stays on the first target
@@ -67,7 +78,7 @@ const LASER_NEXT_MS = 260; // and on each one after it
 const FUSION_MS = 2600;
 const VORTEX_MS = 3200;
 const VORTEX_R = 30; // the vortex's core
-const VORTEX_RANGE = 185; // how far its pull reaches: about two thirds of the ring, so where you open it matters
+const VORTEX_REACH = 0.67; // how far its pull reaches, as a share of the ring: where you open it matters
 const VORTEX_MAX_TIER = 4; // it swallows anything up to Earth size
 const FONT = 'system-ui, -apple-system, "Segoe UI", Roboto, sans-serif';
 const UI = 50;
@@ -85,6 +96,31 @@ function launchRange(runMax) {
   const hi = Math.min(4, lo + 3, Math.max(2, runMax - 3));
   return [lo, hi];
 }
+/**
+ * The ring's size (field units) for each biggest body so far. It holds that body, one of every
+ * smaller body down to the smallest the launcher gives (that one twice: the pair that sets the
+ * chain off) and a few strays. That is the field just before the biggest body gets its match, so
+ * the ring is exactly as big as the next step needs: careful play fits, careless play spills over.
+ */
+const RING = (() => {
+  const out = [];
+  for (let t = 0; t <= MAX_PLANET; t++) {
+    const top = Math.max(t, 2);
+    const [lo, hi] = launchRange(top);
+    let area = TIERS[lo].r ** 2;
+    for (let k = lo; k <= top; k++) area += TIERS[k].r ** 2;
+    let w = 0;
+    let a = 0;
+    for (let k = lo; k <= hi; k++) {
+      w += SPAWN_WEIGHTS[k - lo];
+      a += SPAWN_WEIGHTS[k - lo] * TIERS[k].r ** 2;
+    }
+    area += (STRAYS * a) / w;
+    out.push(Math.sqrt(area / PACKING));
+  }
+  out.push((out[MAX_PLANET] * out[MAX_PLANET]) / out[MAX_PLANET - 1]); // one step past the last, for a revive
+  return out;
+})();
 const FIRST_KINDS = [0, 1, 2, 'comet', 'wrecker']; // what the first screen shows; the rest is textured in the background
 const HINT_Y = 1032;
 
@@ -110,7 +146,6 @@ export class GameScene extends Phaser.Scene {
     this.pieces = [];
     this.dying = [];
     this.mergeQueue = [];
-    this.cometQueue = [];
     this.contacts = new Set();
     this.held = null;
     this.hole = null;
@@ -130,7 +165,10 @@ export class GameScene extends Phaser.Scene {
     this.gravBoostUntil = 0;
     this.worldRot = 0;
     this.fieldScale = 1;
-    this.universeMax = 0; // the biggest tier reached in this universe; sets how far the view pulls back
+    this.universeMax = 0; // the biggest tier reached in this universe
+    this.reviveRing = 0; // a revive makes the ring one step bigger than the field has earned yet
+    this.ringR = RING[2]; // the ring's radius in field units; follows ringTarget() smoothly
+    this.ringDrawnAt = -1;
     this.aimAngle = Math.PI / 2;
     this.aiming = false;
     this.pulled = false;
@@ -150,13 +188,14 @@ export class GameScene extends Phaser.Scene {
     this.lastMergeAt = 0;
     this.runMax = 2; // decides which planets can come out of the launcher
     this.biggest = 0;
-    this.energy = 0;
-    this.cometPending = false;
-    this.cometUses = 0;
-    this.lasers = 1;
-    this.fusions = 1;
-    this.vortexes = 1;
-    this.wreckers = 1;
+    this.premium = Ads.premium;
+    this.boost = {};
+    for (const [key, b] of Object.entries(BOOSTERS)) {
+      const n = this.premium ? b.cap : b.free;
+      this.boost[key] = { left: n, got: n };
+    }
+    this.cometUnlocked = store.get('jd3_comet', false);
+    this.cometFx = null;
     this.revived = false;
     this.seen = store.get('jd3_seen', INITIAL_SEEN);
     this.bannerQueue = [];
@@ -300,9 +339,19 @@ export class GameScene extends Phaser.Scene {
     return { x: CX + (dx * c - dy * n) / s, y: CY + (dx * n + dy * c) / s };
   }
 
-  /** The ring's radius in field units: it holds more space once the view has pulled back. */
+  /** The ring's radius in field units. */
   limitRadius() {
-    return R_LIMIT / this.fieldScale;
+    return this.ringR;
+  }
+
+  /** The ring's radius on screen: it grows until it reaches its biggest, then the view pulls back. */
+  ringScreen() {
+    return this.ringR * this.fieldScale;
+  }
+
+  /** How big the ring should be: just enough room for the biggest body so far to be matched. */
+  ringTarget() {
+    return Math.max(RING[Math.min(this.runMax, MAX_PLANET)], this.reviveRing);
   }
 
   /** The part of the world the player's finger can reach: the whole window, in world units. */
@@ -329,10 +378,6 @@ export class GameScene extends Phaser.Scene {
     return m;
   }
 
-  cometCost() {
-    return COMET_BASE + COMET_STEP * this.cometUses;
-  }
-
   canUseBooster() {
     return this.state === 'aim' || this.state === 'flying';
   }
@@ -357,14 +402,10 @@ export class GameScene extends Phaser.Scene {
   }
 
   buildField() {
-    const g = this.add.graphics();
-    g.lineStyle(3, 0xffffff, 0.07);
-    g.strokeCircle(0, 0, R_LAUNCH);
-    g.lineStyle(2, 0x9f8cff, 0.1);
-    g.strokeCircle(0, 0, R_LIMIT * 0.66);
-    g.strokeCircle(0, 0, R_LIMIT * 0.33);
+    this.ringDecor = this.add.graphics();
     this.limitRing = this.add.graphics();
-    this.drawLimitRing(0xc9bcff);
+    this.limitColor = 0xc9bcff;
+    this.drawRing();
     this.limitRing.setAlpha(0.55);
     const well = this.add.image(0, 0, 'soft').setScale(2.6 / TEX_SCALE).setTint(0x9f6bff).setAlpha(0.55).setBlendMode(Phaser.BlendModes.ADD);
     this.tweens.add({ targets: well, scale: 3.3 / TEX_SCALE, alpha: 0.3, duration: 1500, yoyo: true, repeat: -1, ease: 'Sine.inOut' });
@@ -373,21 +414,45 @@ export class GameScene extends Phaser.Scene {
     const coreBall = this.add.circle(0, 0, 9, 0xf6f0ff);
     this.tweens.add({ targets: coreGlow, scale: 0.95 / TEX_SCALE, duration: 900, yoyo: true, repeat: -1, ease: 'Sine.inOut' });
     this.coreParts = [coreGlow, coreBall];
-    this.ringLayer.add([g, this.limitRing, well, coreGlow, coreBall]);
+    this.ringLayer.add([this.ringDecor, this.limitRing, well, coreGlow, coreBall]);
+  }
+
+  /** The dashed ring, the launch orbit and the faint guide circles, at the ring's current size. */
+  drawRing() {
+    const R = this.ringScreen();
+    this.ringDrawnAt = R;
+    const g = this.ringDecor;
+    g.clear();
+    g.lineStyle(3, 0xffffff, 0.07);
+    g.strokeCircle(0, 0, R + ORBIT_GAP);
+    g.lineStyle(2, 0x9f8cff, 0.1);
+    g.strokeCircle(0, 0, R * 0.66);
+    g.strokeCircle(0, 0, R * 0.33);
+    this.drawLimitRing(this.limitColor);
   }
 
   drawLimitRing(color) {
     const g = this.limitRing;
+    const R = this.ringScreen();
     g.clear();
     g.lineStyle(4, color, 1);
-    const n = 48;
+    const n = Math.max(20, Math.round(R * 0.175));
     for (let i = 0; i < n; i++) {
       const a0 = (i / n) * Math.PI * 2;
       g.beginPath();
-      g.arc(0, 0, R_LIMIT, a0, a0 + (Math.PI * 2) / n / 2, false);
+      g.arc(0, 0, R, a0, a0 + (Math.PI * 2) / n / 2, false);
       g.strokePath();
     }
     this.limitColor = color;
+  }
+
+  /** A bigger body was made: the ring grows to give the next merge room, with a ripple to show it. */
+  ringGrowFx() {
+    const from = this.ringScreen();
+    const to = Math.min(RING_SCREEN_MAX, this.ringTarget()) + 18;
+    const ripple = this.add.circle(CX, CY, from).setStrokeStyle(7, 0xd9ccff, 0.9).setDepth(FX);
+    this.tweens.add({ targets: ripple, radius: to, alpha: 0, duration: 900, ease: 'Cubic.out', onComplete: () => ripple.destroy() });
+    Sfx.ringGrow();
   }
 
   buildHud() {
@@ -395,12 +460,6 @@ export class GameScene extends Phaser.Scene {
     this.scoreText = this.text(40, 56, '0', 58);
     this.bestText = this.text(40, 122, 'BEST ' + this.best, 20, '#b9a8e6');
     this.universeText = this.text(40, 148, '', 20, '#ffd93d');
-
-    // comet meter
-    this.meterGfx = this.add.graphics().setDepth(UI);
-    this.meterIcon = this.portrait(CX, 86, 'comet', 22).setDepth(UI);
-    this.meterLabel = this.text(CX, 140, 'COMET', 15, '#b9a8e6').setOrigin(0.5);
-    this.drawMeter();
 
     // next planet; tap to swap
     this.text(W - 40, 36, 'NEXT', 20, '#b9a8e6').setOrigin(1, 0);
@@ -414,23 +473,6 @@ export class GameScene extends Phaser.Scene {
     this.comboText = this.text(W / 2, 232, '', 40, '#ffd93d').setOrigin(0.5).setAlpha(0).setDepth(FX + 2);
   }
 
-  drawMeter() {
-    const g = this.meterGfx;
-    const frac = this.cometPending ? 1 : Math.min(1, this.energy / this.cometCost());
-    g.clear();
-    g.fillStyle(0xffffff, 0.08);
-    g.fillCircle(CX, 86, 44);
-    g.lineStyle(8, 0xffffff, 0.14);
-    g.strokeCircle(CX, 86, 40);
-    if (frac > 0) {
-      g.lineStyle(8, 0x7fe3ff, 1);
-      g.beginPath();
-      g.arc(CX, 86, 40, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * frac, false);
-      g.strokePath();
-    }
-    this.meterIcon.setAlpha(0.35 + 0.65 * frac);
-  }
-
   boosterButton(x, y, iconKey, iconScale, label, onTap) {
     const bg = this.add.graphics();
     bg.fillStyle(0x1b0e3d, 1);
@@ -442,19 +484,45 @@ export class GameScene extends Phaser.Scene {
     const name = this.add.text(0, 33, label, { fontFamily: FONT, fontSize: 13, color: '#cfc4ff', fontStyle: 'bold' }).setOrigin(0.5).setResolution(TEX_SCALE);
     const badgeBg = this.add.graphics();
     const badge = this.add.text(40, -42, '', { fontFamily: FONT, fontSize: 18, color: '#ffffff', fontStyle: 'bold' }).setOrigin(0.5).setResolution(TEX_SCALE);
-    const c = this.add.container(x, y, [bg, ring, icon, name, badgeBg, badge]).setDepth(UI);
+    const lock = this.add.graphics();
+    lock.fillStyle(0xd9ccff, 1);
+    lock.fillRoundedRect(-13, -14, 26, 20, 5);
+    lock.lineStyle(4, 0xd9ccff, 1);
+    lock.beginPath();
+    lock.arc(0, -14, 8, Math.PI, 0, false);
+    lock.strokePath();
+    lock.fillStyle(0x3d2a85, 1);
+    lock.fillCircle(0, -5, 3);
+    lock.setVisible(false);
+    const c = this.add.container(x, y, [bg, ring, icon, name, badgeBg, badge, lock]).setDepth(UI);
     c.setSize(104, 100);
+    c.boosterName = label;
     this.tappable(c, () => {
       Sfx.click();
       onTap();
     });
-    c.setCount = (n) => {
+    /** left: uses remaining; ad: an ad can add one; locked: not unlocked yet. */
+    c.setState = (left, ad, locked = false) => {
       badgeBg.clear();
-      badgeBg.fillStyle(n > 0 ? 0xff5d73 : 0x37b24d, 1);
-      if (n > 0) badgeBg.fillCircle(40, -42, 17);
-      else badgeBg.fillRoundedRect(14, -58, 52, 32, 16);
-      badge.setText(n > 0 ? String(n) : 'AD ▶');
-      badge.setFontSize(n > 0 ? 20 : 15);
+      lock.setVisible(locked);
+      icon.setAlpha(locked ? 0.25 : left > 0 || ad ? 1 : 0.35);
+      name.setText(locked ? 'LOCKED' : label);
+      name.setAlpha(locked || (left <= 0 && !ad) ? 0.55 : 1);
+      if (locked) {
+        badge.setText('');
+        return;
+      }
+      if (left > 0) {
+        badgeBg.fillStyle(0xff5d73, 1);
+        badgeBg.fillCircle(40, -42, 17);
+        badge.setText(String(left)).setFontSize(20);
+      } else if (ad) {
+        badgeBg.fillStyle(0x37b24d, 1);
+        badgeBg.fillRoundedRect(14, -58, 52, 32, 16);
+        badge.setText('AD ▶').setFontSize(15);
+      } else {
+        badge.setText('');
+      }
     };
     c.setActive = (on) => {
       ring.clear();
@@ -468,24 +536,22 @@ export class GameScene extends Phaser.Scene {
 
   buildBottomBar() {
     const y = 1206;
-    this.laserBtn = this.boosterButton(96, y, 'icon_laser', 0.9, 'LASER', () => this.useLaser());
-    this.fusionBtn = this.boosterButton(272, y, 'icon_fusion', 1, 'FUSION', () => this.useFusion());
-    this.vortexBtn = this.boosterButton(448, y, 'icon_vortex', 1, 'VORTEX', () => this.useVortex());
-    this.wreckerBtn = this.boosterButton(624, y, portraitKey('wrecker'), 0.55, 'SMASH', () => this.useWrecker());
-    this.laserBtn.setCount(this.lasers);
-    this.fusionBtn.setCount(this.fusions);
-    this.vortexBtn.setCount(this.vortexes);
-    this.wreckerBtn.setCount(this.wreckers);
+    const x = (i) => W / 2 + (i - 2) * 136;
+    this.laserBtn = this.boosterButton(x(0), y, 'icon_laser', 0.9, 'LASER', () => this.useLaser());
+    this.fusionBtn = this.boosterButton(x(1), y, 'icon_fusion', 1, 'FUSION', () => this.useFusion());
+    this.vortexBtn = this.boosterButton(x(2), y, 'icon_vortex', 1, 'VORTEX', () => this.useVortex());
+    this.wreckerBtn = this.boosterButton(x(3), y, portraitKey('wrecker'), 0.55, 'SMASH', () => this.useWrecker());
+    this.cometBtn = this.boosterButton(x(4), y, portraitKey('comet'), 0.62, 'COMET', () => this.useComet());
+    this.btn = { laser: this.laserBtn, fusion: this.fusionBtn, vortex: this.vortexBtn, smash: this.wreckerBtn, comet: this.cometBtn };
+    this.refreshBoosters();
 
-    // album strip: only the bodies found so far, then one '?'. Nothing about what is still
-    // hidden is shown, not even how many there are. Tap for the album.
+    // album strip: only the bodies found so far. Nothing about what is still hidden is shown,
+    // not even that there is more. Tap for the album.
     this.stripY = 1096;
     this.stripPanel = this.add.graphics().setDepth(UI);
     const zone = this.add.zone(W / 2, this.stripY, W - 40, 56);
     this.tappable(zone, () => this.openAlbum(), 1);
     this.strip = TIERS.map(() => this.add.image(0, this.stripY, 'dot').setDepth(UI).setVisible(false));
-    this.stripMore = this.text(0, this.stripY, '?', 22, '#c9b8ff').setOrigin(0.5);
-    this.tweens.add({ targets: this.stripMore, alpha: 0.45, duration: 900, yoyo: true, repeat: -1 });
     this.refreshStrip();
   }
 
@@ -497,8 +563,7 @@ export class GameScene extends Phaser.Scene {
   refreshStrip() {
     if (!this.strip) return;
     const found = this.found().filter((i) => hasKindTextures(this, i));
-    const more = this.found().length < TIERS.length;
-    const n = found.length + (more ? 1 : 0);
+    const n = found.length;
     const cell = Math.min(52, 600 / Math.max(1, n - 1));
     const x0 = W / 2 - ((n - 1) * cell) / 2;
     this.strip.forEach((img) => img.setVisible(false));
@@ -507,7 +572,6 @@ export class GameScene extends Phaser.Scene {
       if (img.texture.key !== portraitKey(tier)) img.setTexture(portraitKey(tier)).setScale(14 / PORTRAIT_R / TEX_SCALE);
       img.setPosition(x0 + i * cell, this.stripY).setVisible(true);
     });
-    this.stripMore.setVisible(more).setX(x0 + found.length * cell);
     const w = (n - 1) * cell + 64;
     this.stripPanel.clear();
     this.stripPanel.fillStyle(0xffffff, 0.07);
@@ -535,21 +599,9 @@ export class GameScene extends Phaser.Scene {
   }
 
   prepareHeld() {
-    if (this.cometPending) {
-      this.cometPending = false;
-      this.energy = 0;
-      this.meterLabel.setText('COMET').setColor('#b9a8e6');
-      this.drawMeter();
-      this.setHeld('comet');
-      if (!store.get('jd2_comet_tip', false)) {
-        store.set('jd2_comet_tip', true);
-        this.banner('COMET', 'Upgrades any planet except your biggest', '#7fe3ff', 'comet');
-      }
-    } else {
-      this.setHeld(this.nextKind);
-      this.nextKind = this.rollTier();
-      this.refreshNext();
-    }
+    this.setHeld(this.nextKind);
+    this.nextKind = this.rollTier();
+    this.refreshNext();
     this.state = 'aim';
   }
 
@@ -610,7 +662,7 @@ export class GameScene extends Phaser.Scene {
     if (!h) return;
     const a = this.aimAngle - this.worldRot;
     const pw = this.aiming ? this.power : 0;
-    const rr = (R_LAUNCH + pw * PULL_BACK) / this.fieldScale;
+    const rr = (this.ringScreen() + ORBIT_GAP + pw * PULL_BACK) / this.fieldScale;
     h.x = CX + Math.cos(a) * rr;
     h.y = CY + Math.sin(a) * rr;
     h.tailAngle = a + Math.PI;
@@ -643,10 +695,25 @@ export class GameScene extends Phaser.Scene {
           g.strokePath();
         }
       }
+    } else if (this.targeting === 'comet') {
+      // planets it can upgrade get a ring; the biggest kind on the field cannot be picked
+      const top = this.fieldMaxTier();
+      const pulse = 0.55 + 0.45 * Math.abs(Math.sin(now / 160));
+      for (const p of this.pieces) {
+        if (p.tier < 0) continue;
+        const at = this.toScreen(p.x, p.y);
+        if (p.tier < top) {
+          g.lineStyle(4, 0x7fe3ff, pulse);
+          g.strokeCircle(at.x, at.y, p.rv * s + 9);
+        } else {
+          g.lineStyle(3, 0xff5d73, 0.35);
+          g.strokeCircle(at.x, at.y, p.rv * s + 7);
+        }
+      }
     } else if (this.targeting === 'vortex') {
       // the area a vortex can be opened in
       g.lineStyle(3, 0xb48cff, 0.3 + 0.2 * Math.abs(Math.sin(now / 200)));
-      g.strokeCircle(CX, CY, R_LIMIT + 10);
+      g.strokeCircle(CX, CY, this.ringScreen() + 10);
     }
     const h = this.held;
     if (!h || !this.aiming || this.power <= 0 || this.state !== 'aim') {
@@ -662,7 +729,8 @@ export class GameScene extends Phaser.Scene {
     band.lineStyle(7 - 4 * pw, 0xbfe9ff, 0.5);
     for (const side of [-1, 1]) {
       const a = this.aimAngle + side * 0.17;
-      band.lineBetween(CX + Math.cos(a) * (R_LAUNCH - 2), CY + Math.sin(a) * (R_LAUNCH - 2), hp.x, hp.y);
+      const o = this.ringScreen() + ORBIT_GAP - 2;
+      band.lineBetween(CX + Math.cos(a) * o, CY + Math.sin(a) * o, hp.x, hp.y);
     }
 
     // where it will first touch something (field coordinates)
@@ -688,17 +756,7 @@ export class GameScene extends Phaser.Scene {
       }
     }
 
-    // a comet shows what it will upgrade, or that the target is too big
-    let dotColor = 0xffffff;
-    if (h.kind === 'comet' && first && first.tier >= 0) {
-      const blocked = first.tier >= this.fieldMaxTier();
-      const at = this.toScreen(first.x, first.y);
-      const color = blocked ? 0xff5d73 : 0x7fe3ff;
-      g.lineStyle(5, color, 0.95);
-      g.strokeCircle(at.x, at.y, first.rv * s + 8);
-      if (blocked) dotColor = 0xff5d73;
-    }
-
+    const dotColor = 0xffffff;
     let i = 0;
     for (let t = h.r * s + 16; t < reach * s && i < this.dots.length; t += 24) {
       this.dots[i]
@@ -738,7 +796,6 @@ export class GameScene extends Phaser.Scene {
     b.flying = true;
     b.born = this.time.now;
     if (power > 0) b.impulse(Math.atan2(dy, dx), -0.1 - power * 0.25); // the released slingshot stretches it
-    if (b.kind === 'comet') this.cometUses++;
     if (b.tier > this.biggest) this.biggest = b.tier;
     this.pieces.push(b);
     this.state = 'flying';
@@ -762,20 +819,40 @@ export class GameScene extends Phaser.Scene {
     return watched;
   }
 
-  /** Shared start of a booster: false when it cannot be used now. With none left, an ad refills one. */
-  async takeBooster(countKey, btn) {
-    if (!this.canUseBooster()) return false;
-    if (this[countKey] <= 0) {
-      if (await this.rewarded()) this[countKey]++;
-      btn.setCount(this[countKey]);
-      return false;
-    }
-    return true;
+  /** Whether an ad can still add one more of this booster in this game. */
+  canAdBooster(key) {
+    return !this.premium && this.boost[key].got < BOOSTERS[key].cap;
   }
 
-  spendBooster(countKey, btn) {
-    this[countKey]--;
-    btn.setCount(this[countKey]);
+  refreshBoosters() {
+    for (const [key, btn] of Object.entries(this.btn)) {
+      btn.setState(this.boost[key].left, this.canAdBooster(key), key === 'comet' && !this.cometUnlocked);
+    }
+  }
+
+  /**
+   * Shared start of a booster: false when it cannot be used now. With none left, an ad adds one,
+   * but only up to the booster's limit for this game.
+   */
+  async takeBooster(key) {
+    if (!this.canUseBooster()) return false;
+    const b = this.boost[key];
+    if (b.left > 0) return true;
+    if (this.canAdBooster(key)) {
+      if (await this.rewarded()) {
+        b.left++;
+        b.got++;
+      }
+    } else {
+      this.floatText(W / 2, HINT_Y, `No more ${this.btn[key].boosterName} this game`, '#ffffff');
+    }
+    this.refreshBoosters();
+    return false;
+  }
+
+  spendBooster(key) {
+    this.boost[key].left--;
+    this.refreshBoosters();
   }
 
   startTargeting(mode, btn, hint) {
@@ -800,7 +877,7 @@ export class GameScene extends Phaser.Scene {
   pickTarget(p) {
     if (this.targeting === 'vortex') {
       // anywhere on the field
-      if (Math.hypot(p.worldX - CX, p.worldY - CY) < R_LIMIT + 70) this.openVortex(this.toField(p.worldX, p.worldY));
+      if (Math.hypot(p.worldX - CX, p.worldY - CY) < this.ringScreen() + 70) this.openVortex(this.toField(p.worldX, p.worldY));
       else this.cancelTargeting();
       return;
     }
@@ -815,8 +892,92 @@ export class GameScene extends Phaser.Scene {
         bestD = d;
       }
     }
-    if (best) this.fireLaser(best);
-    else this.cancelTargeting();
+    if (!best) this.cancelTargeting();
+    else if (this.targeting === 'comet') {
+      if (best.tier < this.fieldMaxTier()) this.launchComet(best);
+      else {
+        // the biggest kind on the field can't be pushed further: pick another
+        const at = this.toScreen(best.x, best.y);
+        this.floatText(at.x, at.y - best.rv * this.fieldScale - 20, 'TOO BIG', '#ff9a9a');
+        Sfx.bonk();
+        Haptics.light();
+      }
+    } else if (this.targeting === 'laser') this.fireLaser(best);
+  }
+
+  // Comet: tap a planet, and a comet streaks in and lifts it one step up the chain. Your biggest
+  // kind can't be picked, so it helps the others catch up rather than racing one planet ahead.
+
+  async useComet() {
+    if (!this.cometUnlocked) {
+      this.floatText(W / 2, HINT_Y, 'Keep merging to unlock', '#ffffff');
+      return;
+    }
+    if (this.cometFx) return;
+    if (this.targeting === 'comet') {
+      this.cancelTargeting();
+      return;
+    }
+    if (!(await this.takeBooster('comet'))) return;
+    const top = this.fieldMaxTier();
+    if (!this.pieces.some((p) => p.tier >= 0 && p.tier < top)) {
+      this.floatText(W / 2, HINT_Y, 'Nothing to upgrade yet', '#ffffff');
+      return;
+    }
+    if (this.targeting) this.cancelTargeting();
+    this.startTargeting('comet', this.cometBtn, 'Tap a planet to upgrade it');
+  }
+
+  launchComet(target) {
+    this.cancelTargeting();
+    this.spendBooster('comet');
+    target.merging = true; // it waits for the comet instead of merging away
+    const a = Math.atan2(target.y - CY, target.x - CX) + (Math.random() - 0.5) * 0.7;
+    const far = (this.ringScreen() + 200) / this.fieldScale;
+    const sx = CX + Math.cos(a) * far;
+    const sy = CY + Math.sin(a) * far;
+    const c = new Planet(this, 'comet', sx, sy);
+    c.pop = 1;
+    this.cometFx = { c, target, sx, sy, t: 0 };
+    this.calmUntil = Math.max(this.calmUntil, this.time.now + COMET_FLIGHT_MS + 1000);
+    Sfx.shoot(0.8);
+    Haptics.light();
+  }
+
+  stepComet(dt) {
+    const f = this.cometFx;
+    if (!f) return;
+    const { c, target } = f;
+    if (!target.body) {
+      // the target went away on its own: the comet is not lost
+      c.destroy();
+      this.cometFx = null;
+      this.boost.comet.left++;
+      this.refreshBoosters();
+      return;
+    }
+    f.t = Math.min(1, f.t + dt / COMET_FLIGHT_MS);
+    const e = f.t * f.t;
+    c.x = f.sx + (target.x - f.sx) * e;
+    c.y = f.sy + (target.y - f.sy) * e;
+    c.tailAngle = Math.atan2(target.y - f.sy, target.x - f.sx);
+    if (f.t < 1) return;
+    c.destroy();
+    this.cometFx = null;
+    this.upgradePlanet(target);
+  }
+
+  /** A comet hit: the planet becomes the next body in the chain. */
+  upgradePlanet(target) {
+    const { x, y, tier } = target;
+    this.removePiece(target);
+    const { shown, points } = this.evolve(x, y, tier);
+    const total = points * 2 * this.universe;
+    this.addScore(total);
+    this.mergeFx(x, y, shown, total);
+    this.shockwave(x, y, TIERS[shown].r + 70, 2.2);
+    Sfx.cometHit();
+    Haptics.heavy();
   }
 
   // Orbital laser: tap a planet, and a satellite vaporizes every planet of that kind, one after another.
@@ -827,7 +988,7 @@ export class GameScene extends Phaser.Scene {
       this.cancelTargeting();
       return;
     }
-    if (!(await this.takeBooster('lasers', this.laserBtn))) return;
+    if (!(await this.takeBooster('laser'))) return;
     if (!this.pieces.some((p) => p.tier >= 0)) {
       this.floatText(W / 2, HINT_Y, 'Nothing to aim at yet', '#ffffff');
       return;
@@ -838,7 +999,7 @@ export class GameScene extends Phaser.Scene {
 
   fireLaser(picked) {
     this.cancelTargeting();
-    this.spendBooster('lasers', this.laserBtn);
+    this.spendBooster('laser');
     this.laserBusy = true;
     // every planet of the picked kind, starting with the picked one, then nearest next
     const rest = this.pieces.filter((p) => p.tier === picked.tier && p !== picked);
@@ -973,13 +1134,13 @@ export class GameScene extends Phaser.Scene {
 
   async useFusion() {
     if (this.fusionPairs) return;
-    if (!(await this.takeBooster('fusions', this.fusionBtn))) return;
+    if (!(await this.takeBooster('fusion'))) return;
     if (!this.findPairs().length) {
       this.floatText(W / 2, HINT_Y, 'No matching pairs yet', '#ffffff');
       return;
     }
     if (this.targeting) this.cancelTargeting();
-    this.spendBooster('fusions', this.fusionBtn);
+    this.spendBooster('fusion');
     const now = this.time.now;
     this.fusionUntil = now + FUSION_MS;
     this.fusionPairs = [];
@@ -1119,14 +1280,14 @@ export class GameScene extends Phaser.Scene {
       this.cancelTargeting();
       return;
     }
-    if (!(await this.takeBooster('vortexes', this.vortexBtn))) return;
+    if (!(await this.takeBooster('vortex'))) return;
     if (this.targeting) this.cancelTargeting();
     this.startTargeting('vortex', this.vortexBtn, 'Tap where to open a vortex');
   }
 
   openVortex(at) {
     this.cancelTargeting();
-    this.spendBooster('vortexes', this.vortexBtn);
+    this.spendBooster('vortex');
     const now = this.time.now;
     this.vortex = { x: at.x, y: at.y, born: now, until: now + VORTEX_MS, swallowed: 0 };
     this.calmUntil = Math.max(this.calmUntil, now + VORTEX_MS + 1000);
@@ -1147,7 +1308,7 @@ export class GameScene extends Phaser.Scene {
       const dx = v.x - b.position.x;
       const dy = v.y - b.position.y;
       const d = Math.hypot(dx, dy) || 1;
-      const range = VORTEX_RANGE + p.r;
+      const range = this.limitRadius() * VORTEX_REACH + p.r;
       if (d > range) continue;
       const k = 1 - d / range;
       const pull = (0.3 + 1.2 * k * k) * grow; // px per step^2
@@ -1198,7 +1359,7 @@ export class GameScene extends Phaser.Scene {
     const R = VORTEX_R * s * grow * fade;
     // the pull's reach, faintly
     g.lineStyle(2, 0xb48cff, 0.18 * grow * fade);
-    g.strokeCircle(at.x, at.y, (VORTEX_RANGE * s) * (0.9 + 0.1 * Math.sin(now / 150)));
+    g.strokeCircle(at.x, at.y, this.limitRadius() * VORTEX_REACH * s * (0.9 + 0.1 * Math.sin(now / 150)));
     // swirling arms
     for (let arm = 0; arm < 4; arm++) {
       const base = now / 260 + (arm * Math.PI) / 2;
@@ -1223,13 +1384,13 @@ export class GameScene extends Phaser.Scene {
 
   async useWrecker() {
     if (this.wrecker || this.wreckerIncoming) return;
-    if (!(await this.takeBooster('wreckers', this.wreckerBtn))) return;
+    if (!(await this.takeBooster('smash'))) return;
     if (!this.pieces.some((p) => p.tier >= 0)) {
       this.floatText(W / 2, HINT_Y, 'Nothing to smash yet', '#ffffff');
       return;
     }
     if (this.targeting) this.cancelTargeting();
-    this.spendBooster('wreckers', this.wreckerBtn);
+    this.spendBooster('smash');
     this.wreckerIncoming = true;
 
     // aim at the middle of the cluster, from a random side, slightly off-centre
@@ -1536,9 +1697,7 @@ export class GameScene extends Phaser.Scene {
           b.force.y += ny * force;
         }
 
-        if (A.tier < 0) this.specialHit(A, B);
-        else if (B.tier < 0) this.specialHit(B, A);
-        else if (A.tier === B.tier && overlap > 1.5 && !A.merging && !B.merging) {
+        if (A.tier >= 0 && A.tier === B.tier && overlap > 1.5 && !A.merging && !B.merging) {
           A.merging = B.merging = true;
           this.mergeQueue.push([A, B]);
         }
@@ -1575,27 +1734,6 @@ export class GameScene extends Phaser.Scene {
     else Haptics.light();
   }
 
-  specialHit(s, other) {
-    if (s.used || other.tier < 0) return;
-    if (s.kind === 'comet') {
-      if (other.merging) return;
-      if (other.tier >= this.maxTier) {
-        // comets can't push your biggest planet any further; it just bounces off
-        const now = this.time.now;
-        if (now - (s.blockedAt ?? -1e9) > 700) {
-          s.blockedAt = now;
-          const at = this.toScreen((s.body.position.x + other.body.position.x) / 2, (s.body.position.y + other.body.position.y) / 2);
-          this.floatText(at.x, at.y, 'TOO BIG', '#ff9a9a');
-          Sfx.bonk();
-          Haptics.light();
-        }
-        return;
-      }
-      s.used = other.merging = true;
-      this.cometQueue.push([s, other]);
-    }
-  }
-
   removePiece(p) {
     const i = this.pieces.indexOf(p);
     if (i >= 0) this.pieces.splice(i, 1);
@@ -1604,6 +1742,7 @@ export class GameScene extends Phaser.Scene {
 
   discover(tier) {
     if (tier > this.biggest) this.biggest = tier;
+    if (!this.cometUnlocked && tier >= COMET_UNLOCK_TIER && tier < HOLE) this.unlockComet();
     if (tier < HOLE && tier > this.universeMax) this.universeMax = tier;
     if (this.seen.includes(tier)) return false;
     this.seen.push(tier);
@@ -1613,13 +1752,26 @@ export class GameScene extends Phaser.Scene {
     return true;
   }
 
+  unlockComet() {
+    this.cometUnlocked = true;
+    store.set('jd3_comet', true);
+    this.refreshBoosters();
+    this.banner('NEW BOOSTER: COMET', 'Tap a planet to upgrade it', '#7fe3ff', 'comet');
+    this.tweens.add({ targets: this.cometBtn, scale: { from: 1.35, to: 1 }, duration: 600, ease: 'Back.out' });
+    Sfx.unlock();
+  }
+
   spawnPiece(x, y, tier) {
     const b = new Planet(this, tier, x, y);
     b.addBody();
     b.pop = 0.5;
     b.pv = 0.16;
     this.pieces.push(b);
-    if (tier > this.runMax) this.runMax = tier;
+    if (tier > this.runMax) {
+      const before = this.ringTarget();
+      this.runMax = tier;
+      if (this.ringTarget() > before + 0.5) this.ringGrowFx();
+    }
     this.discover(tier);
     return b;
   }
@@ -1668,39 +1820,10 @@ export class GameScene extends Phaser.Scene {
       this.addScore(total);
       this.mergeFx(x, y, shown, total);
       this.shockwave(x, y, TIERS[shown].r + 70, 1.8 + shown * 0.2);
-      this.addEnergy(6 + tier * 2);
       Sfx.merge(tier, this.combo);
       Haptics.merge(tier + 1);
       if (tier >= 2) this.slowUntil = now + 60 + tier * 7;
     }
-
-    while (this.cometQueue.length) {
-      const [s, target] = this.cometQueue.shift();
-      if (!s.body || !target.body) continue;
-      const { x, y, tier } = target;
-      this.removePiece(s);
-      this.removePiece(target);
-      const { shown, points } = this.evolve(x, y, tier);
-      const total = points * 2 * this.universe;
-      this.addScore(total);
-      this.mergeFx(x, y, shown, total);
-      this.shockwave(x, y, TIERS[shown].r + 70, 2.2);
-      Sfx.cometHit();
-      Haptics.heavy();
-    }
-  }
-
-  addEnergy(n) {
-    if (this.cometPending) return;
-    this.energy += n;
-    if (this.energy >= this.cometCost()) {
-      this.cometPending = true;
-      Sfx.cometReady();
-      Haptics.medium();
-      this.tweens.add({ targets: this.meterIcon, scale: { from: 44 / PORTRAIT_R / TEX_SCALE, to: 22 / PORTRAIT_R / TEX_SCALE }, duration: 400, ease: 'Back.out' });
-      this.meterLabel.setText('READY!').setColor('#7fe3ff');
-    }
-    this.drawMeter();
   }
 
   addScore(points) {
@@ -1784,7 +1907,11 @@ export class GameScene extends Phaser.Scene {
     this.hole = null;
     this.gravX = CX;
     this.gravY = CY;
-    this.universeMax = 0; // a new, small universe: the view comes back in
+    this.universeMax = 0; // a new, small universe: the ring shrinks back and small planets come again
+    this.runMax = 2;
+    this.reviveRing = 0;
+    this.nextKind = this.rollTier();
+    this.refreshNext();
     this.tweens.add({ targets: this.coreParts, alpha: 1, duration: 600 });
     this.universe++;
     this.addScore(1000 * (this.universe - 1));
@@ -1935,6 +2062,7 @@ export class GameScene extends Phaser.Scene {
         steps++;
       }
       if (steps === 3) this.acc = 0;
+      this.stepComet(Math.min(delta, 50) * rate);
       this.processQueues();
       if (this.state === 'crunch') this.updateCrunch(now);
       else {
@@ -1944,9 +2072,11 @@ export class GameScene extends Phaser.Scene {
       }
       if (this.wrecker && steps > 0) this.emitDarkDust();
     }
-    // the view pulls back smoothly as bigger bodies appear
-    const target = FIELD_SCALE(this.universeMax);
-    if (Math.abs(target - this.fieldScale) > 0.0005) this.fieldScale += (target - this.fieldScale) * Math.min(1, Math.min(delta, 50) / 600);
+    // the ring grows smoothly to the size the biggest body needs; past its biggest on screen, the view pulls back
+    const target = this.ringTarget();
+    if (Math.abs(target - this.ringR) > 0.02) this.ringR += (target - this.ringR) * Math.min(1, Math.min(delta, 50) / 380);
+    this.fieldScale = Math.min(1, RING_SCREEN_MAX / this.ringR);
+    if (Math.abs(this.ringScreen() - this.ringDrawnAt) > 0.25) this.drawRing();
     for (const layer of [this.backLayer, this.batch, this.frontLayer]) layer.setScale(this.fieldScale).setRotation(this.worldRot);
     this.ringLayer.rotation = this.worldRot;
     this.updateHeld();
@@ -1972,17 +2102,14 @@ export class GameScene extends Phaser.Scene {
     for (const p of [...this.pieces]) {
       const age = now - p.born;
       if (p.flying && age > 1800) this.land(p, 0);
-      if (p.tier < 0) {
-        // a comet that never found a target fizzles out
-        if (age > 5000 && !p.used) {
-          this.mergeFx(p.x, p.y, 0, 0);
-          this.removePiece(p);
-        }
-        continue;
-      }
-      const v = p.body.velocity;
-      if (Math.hypot(v.x, v.y) < REST_SPEED) p.restMs = (p.restMs || 0) + dt;
-      else p.restMs = 0;
+      if (p.tier < 0) continue;
+      // resting means staying put: being jostled in place by the cluster still counts as resting,
+      // only really travelling (flying in, rolling, being knocked away) does not
+      if (p.restX === undefined || Math.hypot(p.x - p.restX, p.y - p.restY) > REST_DRIFT) {
+        p.restX = p.x;
+        p.restY = p.y;
+        p.restMs = 0;
+      } else p.restMs += dt;
       const over = Math.hypot(p.x - CX, p.y - CY) + p.r - limit;
       if (calm || age < SETTLE_MS) p.dangerMs = 0;
       else if (over > margin) {
@@ -2114,6 +2241,10 @@ export class GameScene extends Phaser.Scene {
       this.held.update(delta, now);
       draw.push(this.held);
     }
+    if (this.cometFx) {
+      this.cometFx.c.update(delta, now);
+      draw.push(this.cometFx.c);
+    }
   }
 
   // ---------- game over, revive, ads ----------
@@ -2187,11 +2318,13 @@ export class GameScene extends Phaser.Scene {
 
     let y = 720;
     if (!this.revived) {
-      const revive = this.button(W / 2, y, 440, 92, '▶  REVIVE  (watch ad)', 0x37b24d, async () => {
+      // one revive per game: free with Premium, otherwise for an ad
+      const free = this.premium;
+      const revive = this.button(W / 2, y, 440, 92, free ? 'REVIVE  (free)' : '▶  REVIVE  (watch ad)', 0x37b24d, async () => {
         if (this.state !== 'over') return;
         this.state = 'busy';
-        const watched = await Ads.showRewarded();
-        if (watched) {
+        const ok = free || (await Ads.showRewarded());
+        if (ok) {
           items.forEach((o) => o.destroy());
           this.revive();
         } else {
@@ -2209,40 +2342,75 @@ export class GameScene extends Phaser.Scene {
     });
     items.push(again);
     y += 104;
-    const noAds = this.button(W / 2, y, 440, 64, Ads.removed ? 'Ads removed ✓' : 'Remove Ads  $2.99', 0x6741d9, async (c) => {
-      if (Ads.removed || this.state !== 'over') return;
+    const testBuild = typeof window !== 'undefined' && window.__TEST_PURCHASE;
+    const owned = this.premium ? (testBuild ? 'Premium ✓  (test: tap to undo)' : 'Premium ✓') : 'No Ads + Max Boosters  $2.99';
+    const premium = this.button(W / 2, y, 440, 64, owned, 0x6741d9, async () => {
+      if (this.state !== 'over') return;
+      if (this.premium) {
+        if (!testBuild) return;
+        Ads.undoTestPurchase();
+        this.premium = false;
+        items.forEach((o) => o.destroy());
+        this.showGameOver();
+        return;
+      }
       this.state = 'busy';
-      const ok = await Ads.purchaseRemoveAds();
-      if (ok) c.label.setText('Ads removed ✓');
+      const ok = await Ads.purchasePremium();
       this.state = 'over';
-    }, 24);
-    items.push(noAds);
+      if (ok) {
+        this.applyPremium();
+        items.forEach((o) => o.destroy());
+        this.showGameOver(); // again, now with the free revive
+      }
+    }, 22);
+    items.push(premium);
   }
 
-  /** Reward for watching an ad: the outer shell is blown away and play continues. */
+  /** Premium bought during a game: every booster tops up to its maximum straight away. */
+  applyPremium() {
+    this.premium = true;
+    for (const [key, b] of Object.entries(this.boost)) {
+      b.left += BOOSTERS[key].cap - b.got;
+      b.got = BOOSTERS[key].cap;
+    }
+    this.refreshBoosters();
+  }
+
+  /**
+   * A second chance, once per game: a gravity surge. Nothing is destroyed. The ring grows a step,
+   * as if the next body had already been made, the well pulls everything in tight for a moment,
+   * and every countdown starts over. When the next body really is made, the ring has already grown.
+   */
   revive() {
     this.revived = true;
     this.culprit = null;
-    const keep = this.limitRadius() * 0.62;
-    for (const p of [...this.pieces]) {
-      if (Math.hypot(p.x - CX, p.y - CY) + p.r > keep) {
-        this.mergeFx(p.x, p.y, Math.max(0, p.tier), 0);
-        this.removePiece(p);
-      } else {
-        p.dangerMs = 0;
-        p.dangerSec = undefined;
-      }
+    const now = this.time.now;
+    const from = this.ringScreen();
+    this.reviveRing = RING[Math.min(this.runMax + 1, RING.length - 1)];
+    const to = Math.min(RING_SCREEN_MAX, this.reviveRing);
+    for (const p of this.pieces) {
+      p.dangerMs = 0;
+      p.dangerSec = undefined;
+      p.restMs = 0;
     }
-    this.calmUntil = this.time.now + 1500;
-    this.mergeQueue.length = 0;
-    this.cometQueue.length = 0;
+    this.gravBoostUntil = now + 1500;
+    this.calmUntil = now + 2500;
     this.combo = 0;
     this.acc = 0;
+    // the surge: waves of light run from the well out past the new edge
+    for (let i = 0; i < 3; i++) {
+      const wave = this.add.circle(CX, CY, 30).setStrokeStyle(10 - i * 3, 0x8ce99a, 0.9).setDepth(FX);
+      this.tweens.add({ targets: wave, radius: to + 40 + i * 30, alpha: 0, delay: i * 160, duration: 900, ease: 'Cubic.out', onComplete: () => wave.destroy() });
+    }
+    const glow = this.add.image(CX, CY, 'soft').setTint(0x8ce99a).setScale(0.5 / TEX_SCALE).setDepth(FX).setBlendMode(Phaser.BlendModes.ADD);
+    this.tweens.add({ targets: glow, scale: (from / 18) / TEX_SCALE, alpha: 0, duration: 1000, ease: 'Cubic.out', onComplete: () => glow.destroy() });
+    this.banner('SECOND CHANCE', 'Gravity surge: the ring grows a step', '#8ce99a');
+    Sfx.revive();
     Haptics.success();
     if (this.held) this.state = 'aim';
     else {
       this.state = 'flying';
-      this.nextHeldAt = this.time.now + 200;
+      this.nextHeldAt = now + 200;
     }
   }
 
@@ -2260,8 +2428,7 @@ export class GameScene extends Phaser.Scene {
     for (const kind of found) if (!hasKindTextures(this, kind)) makeKindTextures(this, kind);
     this.refreshStrip();
     // the panel grows with what you have found; anything not yet found is not shown at all
-    const more = found.length < TIERS.length;
-    const cards = found.length + (more ? 1 : 0);
+    const cards = found.length;
     const cols = 4;
     const rows = Math.ceil(cards / cols);
     const cellW = 150;
@@ -2285,18 +2452,6 @@ export class GameScene extends Phaser.Scene {
       add(this.portrait(x, y, tier, 34));
       add(this.text(x, y + 58, TIERS[tier].name, 20).setOrigin(0.5));
     });
-    if (more) {
-      // one mystery card: it says there is more, but not what, or how much
-      const { x, y } = cardAt(found.length);
-      const g = add(this.add.graphics());
-      g.fillStyle(0x140a33, 1);
-      g.fillCircle(x, y, 34);
-      g.lineStyle(3, 0xc9b8ff, 0.5);
-      g.strokeCircle(x, y, 34);
-      const q = add(this.text(x, y, '?', 40, '#c9b8ff').setOrigin(0.5));
-      this.tweens.add({ targets: q, alpha: 0.4, duration: 900, yoyo: true, repeat: -1 });
-      add(this.text(x, y + 58, 'Keep merging', 18, '#8f7fc2').setOrigin(0.5));
-    }
     const close = this.button(W / 2, top + h - 66, 300, 76, 'CLOSE', 0x4c6ef5, () => {
       items.forEach((o) => o.destroy());
       // time spent in the album does not count against cooldowns, boosters or danger timers

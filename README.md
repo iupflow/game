@@ -55,12 +55,15 @@ npm run build    # production build in dist/
   surface deforms, not only the outline
 - A planet that reaches the centre without touching anything is caught by the well
   and eases to rest there
-- Album: only bodies already found are shown, followed by a single "?". Nothing about
-  the rest is given away, not even how many there are
-- Comet: merging charges a meter; when full, the next shot upgrades the planet it
-  hits. It cannot upgrade the biggest planet on the field (it bounces off, and the aim
-  line turns red beforehand), and each comet costs more charge than the last, so
-  comets help smaller planets catch up but cannot carry one planet to a black hole
+- Album: only bodies already found are shown. Nothing about the rest is given away, not
+  even that there is more
+- The ring grows with the biggest body made so far. Its size is exactly what the next step
+  needs: room for the biggest body, one of every smaller body down to the smallest the
+  launcher still gives (that one twice, since the last pair sets the chain off) and four
+  stray planets. Careful play fits; dropping planets anywhere soon spills over. It starts
+  small (radius 84 with a Mars) and grows on screen with a ripple each time a bigger body
+  appears, up to its full size at the Blue Giant; past that the view pulls back instead
+  (0.88 for the Supernova, 0.78 for the Pulsar). A new universe starts small again
 - Laser booster: tap a planet, and a satellite vaporizes every planet of that kind, one
   beam after another
 - Fusion booster: every matching pair lifts off, flies over the others to its partner and
@@ -70,14 +73,26 @@ npm run build    # production build in dist/
 - Smash booster: a deep-black ball of dark matter crashes in like a billiards break shot.
   Every planet flies apart, bouncing off each other and off the screen edges, then gravity
   gathers them back into a new, random arrangement
-- One of each booster per game, more through rewarded ads
+- Comet booster: locked until the first Uranus is made, then unlocked for good. Tap a
+  planet and a comet streaks in and lifts it one step up the chain. Your biggest kind on
+  the field can't be picked, so the comet helps the others catch up instead of racing one
+  planet to a black hole
+- Booster limits per game, by strength:
+
+  | Booster | Free at start | Most per game |
+  | ------- | ------------- | ------------- |
+  | Laser   | 1             | 2             |
+  | Fusion  | 0             | 1             |
+  | Vortex  | 1             | 2             |
+  | Smash   | 1             | 2             |
+  | Comet   | 1             | 2             |
+
+  With none left, a rewarded ad adds one, but only until the game's maximum is reached;
+  after that the button stays empty until the next game. Premium players start every game
+  with the maximum
 - Launcher: it gives Moon to Mars at first, then Venus too. Once a Sun is made the Moons
   stop coming, and from the Blue Giant on Mercury stops too, so the long road through the
   stars keeps moving. Nothing bigger than Earth is ever launched
-- Room: the view pulls back a little at the Blue Giant (to 0.97), the Supernova (0.85) and
-  the Pulsar (0.75). Each step is sized so that the field just before the next big merge (one
-  of every smaller body) fills the ring to about 53%, which leaves roughly one small planet
-  of slack: enough for a careful player, not enough to stop thinking about space
 - Buttons only react when the press starts on them, so a pull that ends over the bottom
   bar never triggers it
 - Swap: tap the NEXT planet to exchange it with the one waiting on the ring
@@ -86,13 +101,20 @@ npm run build    # production build in dist/
 ## Losing
 
 A planet resting clearly outside the dashed ring for 5 seconds ends the game. Only resting
-counts: while a planet is still moving its countdown waits, which leaves time to use a
-booster. Each planet counts down on its own with a red ring, a number, a beep and a buzz
+counts: while a planet is still travelling (flying in, rolling, being knocked away) its
+countdown waits, which leaves time to use a booster. Being jostled in place by the cluster
+still counts as resting, so firing shots quickly does not keep the countdown away. Each planet counts down on its own with a red ring, a number, a beep and a buzz
 every second, and the count winds back down if it gets back inside. The game-over screen
 names the planet.
 
+One revive per game: for a rewarded ad, or free with Premium. Nothing is destroyed. A
+gravity surge grows the ring one step, as if the next body had already been made, pulls
+everything in tight for a moment and restarts every countdown. When that next body really
+is made, the ring has already grown, so the extra room is borrowed, not given.
+
 ## Monetization flow
 
-- Rewarded ad: one revive per game, extra boosters
+- Rewarded ad: the revive (once per game), and boosters up to each one's per-game maximum
 - Interstitial: every 3rd game, never during the first 3 games
-- "Remove Ads" purchase: disables interstitials, rewarded ads stay available
+- Premium purchase ($2.99, placeholder price): no interstitials, every booster at its
+  maximum from the start of each game, and a free revive
