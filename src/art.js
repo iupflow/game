@@ -224,13 +224,18 @@ function craters(list, P, out, strength) {
 // out is [r, g, b, alpha 0..1].
 
 const SURFACES = {
-  asteroid() {
-    const n = makeNoise(11);
-    const list = makeCraters(13, 7, 0.14, 0.36);
-    const col = ramp([[-0.6, 0x8c7e72], [0, 0xae9f8f], [0.6, 0xcdbfae]]);
+  mercury() {
+    const n = makeNoise(16);
+    const m = makeNoise(17);
+    const list = makeCraters(18, 11, 0.08, 0.26);
+    const col = ramp([[-0.6, 0x8f857c], [0, 0xa89d92], [0.6, 0xc9bfb3]]);
+    const RAY = rgb(0xece4da);
     return (P, mu, out) => {
-      col(fbm(n, P[0] * 2, P[1] * 2, P[2] * 2, 3) * 1.4, out);
-      craters(list, P, out, 0.3);
+      col(fbm(n, P[0] * 2.4, P[1] * 2.4, P[2] * 2.4, 3) * 1.3, out);
+      craters(list, P, out, 0.32);
+      // a couple of young, bright craters with streaks of ejecta
+      const ray = smooth(0.55, 0.85, Math.abs(m(P[0] * 6, P[1] * 6, P[2] * 6)));
+      mixTo(out, RAY, ray * 0.18);
     };
   },
 
@@ -322,6 +327,16 @@ const SURFACES = {
     };
   },
 
+  uranus() {
+    const n = makeNoise(66);
+    const col = ramp([[-0.6, 0x7fd9d6], [0, 0x9ce6e2], [0.6, 0xc3f3ef]]);
+    return (P, mu, out) => {
+      const lat = Math.asin(Math.max(-1, Math.min(1, -P[1])));
+      // almost featureless: a soft haze with faint bands
+      col(0.25 * Math.sin(lat * 6) + 0.25 * fbm(n, P[0] * 1.6, P[1] * 1.6, P[2] * 1.6, 2), out);
+    };
+  },
+
   saturn() {
     const w = makeNoise(72);
     const col = bands([0xf6e2b0, 0xeccb8e, 0xfaecca, 0xe4c086, 0xf4dca6, 0xe9c690]);
@@ -365,6 +380,14 @@ const SURFACES = {
     };
   },
 
+  bluegiant() {
+    const n = makeNoise(106);
+    const col = ramp([[0.5, 0x4f7dff], [0.72, 0x7fb0ff], [0.9, 0xc2dcff], [1, 0xf4f8ff]]);
+    return (P, mu, out) => {
+      col(0.5 + 0.48 * Math.pow(mu, 0.6) + 0.07 * fbm(n, P[0] * 3, P[1] * 3, P[2] * 3, 3), out);
+    };
+  },
+
   supernova() {
     const n = makeNoise(111);
     const m = makeNoise(112);
@@ -375,6 +398,19 @@ const SURFACES = {
       body(r + 0.1 * fbm(m, P[0] * 2, P[1] * 2, P[2] * 2, 2), out);
       mixTo(out, PINK, smooth(0.82, 0.96, 1 - Math.abs(fbm(n, P[0] * 2.6, P[1] * 2.6, P[2] * 2.6, 3))) * smooth(0.3, 0.7, r) * 0.7);
       out[3] = 1 - 0.45 * smooth(0.86, 1, r);
+    };
+  },
+
+  // a neutron star: a blinding white-blue core wrapped in magnetic loops
+  pulsar() {
+    const n = makeNoise(126);
+    const body = ramp([[0, 0xffffff], [0.45, 0xd6f6ff], [0.75, 0x8ad4ff], [1, 0x9a7dff]]);
+    const LOOP = rgb(0xf4e9ff);
+    return (P, mu, out) => {
+      const r = Math.sqrt(Math.max(0, 1 - mu * mu));
+      body(r, out);
+      const loops = 1 - Math.abs(n(P[0] * 2.2, P[1] * 5, P[2] * 2.2));
+      mixTo(out, LOOP, smooth(0.86, 0.97, loops) * smooth(0.25, 0.75, r) * 0.8);
     };
   },
 
@@ -642,6 +678,66 @@ const PARTS = {
       }
     },
   },
+  uranusRing: {
+    size: 1.9,
+    draw(ctx, R, front) {
+      // Uranus lies on its side, so its thin rings stand almost upright
+      ctx.rotate(rad(78));
+      for (const [r0, r1, al] of [[1.42, 1.5, 0.55], [1.58, 1.64, 0.4], [1.7, 1.73, 0.3]]) {
+        ringBand(ctx, R, r0, r1, 0.22, `rgba(220,250,255,${al})`, front);
+      }
+    },
+  },
+  blueGlow: {
+    size: 1.8,
+    blend: 'add',
+    spin: 'slow',
+    draw(ctx, R) {
+      glow(ctx, R, 1.8, [[0, 'rgba(150,190,255,.85)'], [0.35, 'rgba(90,130,255,.32)'], [1, 'rgba(70,90,255,0)']]);
+      for (let i = 0; i < 6; i++) {
+        ctx.save();
+        ctx.rotate((i / 6) * TAU + 0.3);
+        const g = ctx.createLinearGradient(0, 0, 1.75 * R, 0);
+        g.addColorStop(0, 'rgba(230,240,255,.6)');
+        g.addColorStop(1, 'rgba(150,180,255,0)');
+        ctx.fillStyle = g;
+        ctx.beginPath();
+        ctx.moveTo(R * 0.8, -R * 0.06);
+        ctx.lineTo(1.75 * R, 0);
+        ctx.lineTo(R * 0.8, R * 0.06);
+        ctx.fill();
+        ctx.restore();
+      }
+    },
+  },
+  pulsarGlow: {
+    size: 2,
+    blend: 'add',
+    draw(ctx, R) {
+      glow(ctx, R, 2, [[0, 'rgba(180,230,255,.85)'], [0.35, 'rgba(150,120,255,.3)'], [1, 'rgba(120,80,255,0)']]);
+    },
+  },
+  pulsarBeams: {
+    size: 3.2,
+    blend: 'add',
+    spin: 'fast',
+    draw(ctx, R) {
+      // two beams of light from the magnetic poles; the part turns, sweeping them around
+      for (const dir of [-1, 1]) {
+        const g = ctx.createLinearGradient(0, 0, 0, dir * 3.1 * R);
+        g.addColorStop(0, 'rgba(255,255,255,.95)');
+        g.addColorStop(0.4, 'rgba(160,230,255,.5)');
+        g.addColorStop(1, 'rgba(140,120,255,0)');
+        ctx.fillStyle = g;
+        ctx.beginPath();
+        ctx.moveTo(-R * 0.12, dir * R * 0.6);
+        ctx.lineTo(-R * 0.55, dir * 3.1 * R);
+        ctx.lineTo(R * 0.55, dir * 3.1 * R);
+        ctx.lineTo(R * 0.12, dir * R * 0.6);
+        ctx.fill();
+      }
+    },
+  },
   holeGlow: {
     size: 2.4,
     blend: 'add',
@@ -774,18 +870,21 @@ const ROCK = { rim: 0xffffff, rimK: 0.35, sheen: 0.12, gloss: 0.32 };
 const STAR = { rim: 0xfff8dc, rimK: 0.3, sheen: 0.1, gloss: 0 };
 
 export const TIERS = [
-  { name: 'Asteroid', r: 21, color: 0xb3a493, surface: 'asteroid', light: ROCK, parts: [] },
-  { name: 'Moon', r: 26, color: 0xdcdaea, surface: 'moon', light: ROCK, parts: [] },
-  { name: 'Mars', r: 32, color: 0xec8158, surface: 'mars', light: { rim: 0xffd2bf, rimK: 0.45, sheen: 0.12, gloss: 0.35 }, parts: [] },
-  { name: 'Venus', r: 39, color: 0xf6cf8a, surface: 'venus', light: { rim: 0xfff4da, rimK: 0.5, sheen: 0.12, gloss: 0.35 }, parts: [] },
-  { name: 'Earth', r: 47, color: 0x3a8eec, surface: 'earth', light: { rim: 0xb8e2ff, rimK: 0.65, sheen: 0.12, gloss: 0.45 }, parts: [] },
-  { name: 'Neptune', r: 56, color: 0x5288f5, surface: 'neptune', light: { rim: 0xc6e8ff, rimK: 0.6, sheen: 0.12, gloss: 0.4 }, parts: [] },
-  { name: 'Saturn', r: 66, color: 0xf0d39c, surface: 'saturn', light: { rim: 0xfff4dc, rimK: 0.45, sheen: 0.12, gloss: 0.35 }, parts: [['saturnRing', false], ['saturnRing', true]] },
-  { name: 'Jupiter', r: 78, color: 0xeab28a, surface: 'jupiter', light: { rim: 0xffefe0, rimK: 0.45, sheen: 0.12, gloss: 0.35 }, parts: [] },
-  { name: 'Sun', r: 92, color: 0xffc247, surface: 'sun', light: STAR, parts: [['sunGlow', false]] },
-  { name: 'Red Giant', r: 108, color: 0xff6a4f, surface: 'redgiant', light: STAR, parts: [['redGlow', false]] },
-  { name: 'Supernova', r: 126, color: 0xa6c9ff, surface: 'supernova', light: null, parts: [['novaGlow', false]] },
-  { name: 'Black Hole', r: 80, color: 0xffb347, surface: 'blackhole', light: null, parts: [['holeGlow', false], ['holeDisk', false], ['holeDisk', true]] },
+  { name: 'Moon', r: 20, color: 0xdcdaea, surface: 'moon', light: ROCK, parts: [] },
+  { name: 'Mercury', r: 24, color: 0xb1a69b, surface: 'mercury', light: ROCK, parts: [] },
+  { name: 'Mars', r: 28, color: 0xec8158, surface: 'mars', light: { rim: 0xffd2bf, rimK: 0.45, sheen: 0.12, gloss: 0.35 }, parts: [] },
+  { name: 'Venus', r: 33, color: 0xf6cf8a, surface: 'venus', light: { rim: 0xfff4da, rimK: 0.5, sheen: 0.12, gloss: 0.35 }, parts: [] },
+  { name: 'Earth', r: 39, color: 0x3a8eec, surface: 'earth', light: { rim: 0xb8e2ff, rimK: 0.65, sheen: 0.12, gloss: 0.45 }, parts: [] },
+  { name: 'Neptune', r: 45, color: 0x5288f5, surface: 'neptune', light: { rim: 0xc6e8ff, rimK: 0.6, sheen: 0.12, gloss: 0.4 }, parts: [] },
+  { name: 'Uranus', r: 52, color: 0x9ce6e2, surface: 'uranus', light: { rim: 0xe2fffd, rimK: 0.55, sheen: 0.12, gloss: 0.4 }, parts: [['uranusRing', false], ['uranusRing', true]] },
+  { name: 'Saturn', r: 60, color: 0xf0d39c, surface: 'saturn', light: { rim: 0xfff4dc, rimK: 0.45, sheen: 0.12, gloss: 0.35 }, parts: [['saturnRing', false], ['saturnRing', true]] },
+  { name: 'Jupiter', r: 69, color: 0xeab28a, surface: 'jupiter', light: { rim: 0xffefe0, rimK: 0.45, sheen: 0.12, gloss: 0.35 }, parts: [] },
+  { name: 'Sun', r: 79, color: 0xffc247, surface: 'sun', light: STAR, parts: [['sunGlow', false]] },
+  { name: 'Red Giant', r: 90, color: 0xff6a4f, surface: 'redgiant', light: STAR, parts: [['redGlow', false]] },
+  { name: 'Blue Giant', r: 102, color: 0x8ab4ff, surface: 'bluegiant', light: { rim: 0xeaf2ff, rimK: 0.35, sheen: 0.1, gloss: 0 }, parts: [['blueGlow', false]] },
+  { name: 'Supernova', r: 115, color: 0xa6c9ff, surface: 'supernova', light: null, parts: [['novaGlow', false]] },
+  { name: 'Pulsar', r: 129, color: 0xb6e6ff, surface: 'pulsar', light: null, parts: [['pulsarGlow', false], ['pulsarBeams', false]] },
+  { name: 'Black Hole', r: 85, color: 0xffb347, surface: 'blackhole', light: null, parts: [['holeGlow', false], ['holeDisk', false], ['holeDisk', true]] },
 ];
 
 export const SPECIALS = {
@@ -862,7 +961,10 @@ function frameOf(tilt, roll, spin) {
 }
 
 const FRAMES = {
-  asteroid: [0.4, 0.5, 0.3],
+  mercury: [0.2, 0.3, 1.1],
+  uranus: [0.1, 0.0, 0],
+  bluegiant: [0.2, 0, 0.3],
+  pulsar: [0.4, 0.2, 0],
   moon: [0.1, 0.1, 0.2],
   mars: [0.35, -0.2, 0.6],
   venus: [0.05, 0.08, 0.2],

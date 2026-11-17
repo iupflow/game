@@ -260,6 +260,7 @@ export class Planet {
     for (const { img, spin } of this.parts) {
       img.setPosition(lx, ly).setScale(s).setAlpha(this.alpha);
       if (spin === 'slow') img.setRotation(now * 0.0004);
+      else if (spin === 'fast') img.setRotation(now * 0.0035); // a pulsar's sweeping beams
       else if (spin === 'velocity') img.setRotation(this.tailAngle);
       else img.setRotation(this.rot);
     }

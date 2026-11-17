@@ -8,9 +8,10 @@ side of the outer orbit and let gravity pull it in, or press anywhere and pull b
 a slingshot: the direction of the pull picks where on the orbit the planet starts, and
 the length of the pull sets how hard it is launched toward the centre. Full power is
 always reachable before the finger meets the edge of the screen. Two of the
-same kind merge into the next body in a 12-step chain that runs from an asteroid to a
-supernova. Two supernovas collapse into a black hole, which swallows the whole field
-and starts a new universe with a higher score multiplier.
+same kind merge into the next body in a 15-step chain: Moon, Mercury, Mars, Venus, Earth,
+Neptune, Uranus, Saturn, Jupiter, Sun, Red Giant, Blue Giant, Supernova, Pulsar. Two pulsars
+collapse into a black hole, which swallows the whole field and starts a new universe with a
+higher score multiplier.
 
 ## Run
 
@@ -35,9 +36,13 @@ npm run build    # production build in dist/
 - `src/ads.js` – ad and purchase layer. Uses placeholder overlays in the browser;
   replace the `platform` functions with real SDK calls for the store build
 - `src/haptics.js` – vibration (Capacitor Haptics in the store build, browser fallbacks)
-- `src/sfx.js` – synthesized sound (Web Audio, no files): a different merge sound for every
-  planet, all on one pentatonic scale so merges and combos sound musical, plus a compressor
-  and a small reverb
+- `src/sfx.js` – synthesized sound (Web Audio, no files). Every merge has its own kind of
+  sound, not just its own pitch: a glassy ting for moons, a metal clink for Mercury, a gravel
+  crunch for Mars, a cloudy breath for Venus, bubbles for Earth, an icy whistle for Neptune,
+  a wah-wah for Uranus, a gong for Saturn, thunder and horns for Jupiter, a fiery fanfare for
+  the Sun, a slow swell for the Red Giant, electric zaps for the Blue Giant, an explosion for
+  the Supernova and radio pulses for the Pulsar. Notes sit on one pentatonic scale so combos
+  sound musical; a compressor and a small reverb glue it together
 
 ## Game systems
 
@@ -50,7 +55,8 @@ npm run build    # production build in dist/
   surface deforms, not only the outline
 - A planet that reaches the centre without touching anything is caught by the well
   and eases to rest there
-- Album: every new body is recorded; unknown ones show as silhouettes
+- Album: only bodies already found are shown, followed by a single "?". Nothing about
+  the rest is given away, not even how many there are
 - Comet: merging charges a meter; when full, the next shot upgrades the planet it
   hits. It cannot upgrade the biggest planet on the field (it bounces off, and the aim
   line turns red beforehand), and each comet costs more charge than the last, so
@@ -65,8 +71,13 @@ npm run build    # production build in dist/
   Every planet flies apart, bouncing off each other and off the screen edges, then gravity
   gathers them back into a new, random arrangement
 - One of each booster per game, more through rewarded ads
-- As bigger bodies appear (Sun, Red Giant, Supernova) the view pulls back, so the ring holds
-  more space and the late game does not run out of room
+- Launcher: it gives Moon to Mars at first, then Venus too. Once a Sun is made the Moons
+  stop coming, and from the Blue Giant on Mercury stops too, so the long road through the
+  stars keeps moving. Nothing bigger than Earth is ever launched
+- Room: the view pulls back a little at the Blue Giant (to 0.97), the Supernova (0.85) and
+  the Pulsar (0.75). Each step is sized so that the field just before the next big merge (one
+  of every smaller body) fills the ring to about 53%, which leaves roughly one small planet
+  of slack: enough for a careful player, not enough to stop thinking about space
 - Buttons only react when the press starts on them, so a pull that ends over the bottom
   bar never triggers it
 - Swap: tap the NEXT planet to exchange it with the one waiting on the ring

@@ -28,7 +28,7 @@ const CAPTURE_STEPS = 50;
 const R_LIMIT = 275; // the ring planets must stay inside, on screen
 const R_LAUNCH = 300; // planets wait on this orbit before launch, on screen
 // As bigger bodies appear the view pulls back, so the ring holds more space: by the biggest tier reached.
-const FIELD_SCALE = (tier) => (tier >= 10 ? 0.74 : tier >= 9 ? 0.82 : tier >= 8 ? 0.9 : 1);
+const FIELD_SCALE = (tier) => (tier >= 13 ? 0.75 : tier >= 12 ? 0.85 : tier >= 11 ? 0.97 : 1);
 const STEP = 1000 / 60;
 const STEP2 = STEP * STEP;
 const GRAVITY = 0.15; // pull toward the centre, in px per step^2
@@ -74,7 +74,17 @@ const UI = 50;
 const FX = 40;
 const OVERLAY = 100;
 const INITIAL_SEEN = [0, 1, 2];
-const SPAWN_WEIGHTS = [38, 30, 20, 12]; // only the four smallest bodies are ever launched
+const SPAWN_WEIGHTS = [38, 30, 20, 12]; // for the smallest to the biggest body the launcher can give
+/**
+ * Which bodies the launcher can give: Moon to Mars at first, then Venus too. Once a Sun is made the
+ * Moons stop coming, and from the Blue Giant on Mercury stops too, so the long road through the stars
+ * keeps moving. Nothing bigger than Earth is ever launched.
+ */
+function launchRange(runMax) {
+  const lo = runMax >= 11 ? 2 : runMax >= 9 ? 1 : 0;
+  const hi = Math.min(4, lo + 3, Math.max(2, runMax - 3));
+  return [lo, hi];
+}
 const FIRST_KINDS = [0, 1, 2, 'comet', 'wrecker']; // what the first screen shows; the rest is textured in the background
 const HINT_Y = 1032;
 
@@ -148,7 +158,9 @@ export class GameScene extends Phaser.Scene {
     this.vortexes = 1;
     this.wreckers = 1;
     this.revived = false;
-    this.seen = store.get('jd2_seen', INITIAL_SEEN);
+    this.seen = store.get('jd3_seen', INITIAL_SEEN);
+    this.bannerQueue = [];
+    this.bannerBusy = false;
 
     this.drawBackground();
     this.ringLayer = this.add.container(CX, CY).setDepth(9); // field decoration: turns, never scales
@@ -465,52 +477,55 @@ export class GameScene extends Phaser.Scene {
     this.vortexBtn.setCount(this.vortexes);
     this.wreckerBtn.setCount(this.wreckers);
 
-    // album strip: the whole chain in one row, unknown bodies as silhouettes; tap for the album
-    const cell = 52;
-    const x0 = W / 2 - (5.5 * cell);
-    const sy = 1096;
-    const panel = this.add.graphics().setDepth(UI);
-    panel.fillStyle(0xffffff, 0.07);
-    panel.fillRoundedRect(x0 - 30, sy - 26, 11 * cell + 60, 52, 26);
-    const zone = this.add.zone(W / 2, sy, 11 * cell + 60, 52);
+    // album strip: only the bodies found so far, then one '?'. Nothing about what is still
+    // hidden is shown, not even how many there are. Tap for the album.
+    this.stripY = 1096;
+    this.stripPanel = this.add.graphics().setDepth(UI);
+    const zone = this.add.zone(W / 2, this.stripY, W - 40, 56);
     this.tappable(zone, () => this.openAlbum(), 1);
-    this.strip = TIERS.map((t, i) => {
-      const x = x0 + i * cell;
-      const img = this.add.image(x, sy, 'dot').setDepth(UI).setVisible(false);
-      const q = this.text(x, sy, '?', 20, '#8f7fc2').setOrigin(0.5);
-      return { img, q, ready: false };
-    });
+    this.strip = TIERS.map(() => this.add.image(0, this.stripY, 'dot').setDepth(UI).setVisible(false));
+    this.stripMore = this.text(0, this.stripY, '?', 22, '#c9b8ff').setOrigin(0.5);
+    this.tweens.add({ targets: this.stripMore, alpha: 0.45, duration: 900, yoyo: true, repeat: -1 });
     this.refreshStrip();
+  }
+
+  /** The bodies found so far, in chain order. */
+  found() {
+    return TIERS.map((t, i) => i).filter((i) => this.seen.includes(i));
   }
 
   refreshStrip() {
     if (!this.strip) return;
-    this.strip.forEach((cell, i) => {
-      const { img, q } = cell;
-      if (!cell.ready && hasKindTextures(this, i)) {
-        img.setTexture(portraitKey(i)).setScale(14 / PORTRAIT_R / TEX_SCALE);
-        cell.ready = true;
-      }
-      const known = this.seen.includes(i);
-      if (known) img.clearTint().setAlpha(1);
-      else img.setTintFill(0x2c1d66).setAlpha(0.9);
-      img.setVisible(cell.ready);
-      q.setVisible(!known);
+    const found = this.found().filter((i) => hasKindTextures(this, i));
+    const more = this.found().length < TIERS.length;
+    const n = found.length + (more ? 1 : 0);
+    const cell = Math.min(52, 600 / Math.max(1, n - 1));
+    const x0 = W / 2 - ((n - 1) * cell) / 2;
+    this.strip.forEach((img) => img.setVisible(false));
+    found.forEach((tier, i) => {
+      const img = this.strip[i];
+      if (img.texture.key !== portraitKey(tier)) img.setTexture(portraitKey(tier)).setScale(14 / PORTRAIT_R / TEX_SCALE);
+      img.setPosition(x0 + i * cell, this.stripY).setVisible(true);
     });
+    this.stripMore.setVisible(more).setX(x0 + found.length * cell);
+    const w = (n - 1) * cell + 64;
+    this.stripPanel.clear();
+    this.stripPanel.fillStyle(0xffffff, 0.07);
+    this.stripPanel.fillRoundedRect(W / 2 - w / 2, this.stripY - 26, w, 52, 26);
   }
 
   // ---------- aiming and launching ----------
 
   rollTier() {
-    const top = Phaser.Math.Clamp(this.runMax - 3, 2, SPAWN_WEIGHTS.length - 1);
+    const [lo, hi] = launchRange(this.runMax);
     let total = 0;
-    for (let i = 0; i <= top; i++) total += SPAWN_WEIGHTS[i];
+    for (let t = lo; t <= hi; t++) total += SPAWN_WEIGHTS[t - lo];
     let n = Math.random() * total;
-    for (let i = 0; i <= top; i++) {
-      n -= SPAWN_WEIGHTS[i];
-      if (n < 0) return i;
+    for (let t = lo; t <= hi; t++) {
+      n -= SPAWN_WEIGHTS[t - lo];
+      if (n < 0) return t;
     }
-    return 0;
+    return lo;
   }
 
   setHeld(kind) {
@@ -1592,7 +1607,7 @@ export class GameScene extends Phaser.Scene {
     if (tier < HOLE && tier > this.universeMax) this.universeMax = tier;
     if (this.seen.includes(tier)) return false;
     this.seen.push(tier);
-    store.set('jd2_seen', this.seen);
+    store.set('jd3_seen', this.seen);
     this.refreshStrip();
     this.showDiscovery(tier);
     return true;
@@ -1830,7 +1845,17 @@ export class GameScene extends Phaser.Scene {
   }
 
   /** A card that drops in under the top bar, so it never hides the centre of the field. */
+  /** Banners queue up, so two discoveries in one combo are shown one after the other. */
   banner(title, subtitle, color, kind = null) {
+    this.bannerQueue.push([title, subtitle, color, kind]);
+    if (!this.bannerBusy) this.nextBanner();
+  }
+
+  nextBanner() {
+    const next = this.bannerQueue.shift();
+    this.bannerBusy = !!next;
+    if (!next) return;
+    const [title, subtitle, color, kind] = next;
     const y = 270;
     const hasPic = kind !== null;
     const picW = hasPic ? 110 : 0;
@@ -1850,7 +1875,21 @@ export class GameScene extends Phaser.Scene {
     items.push(t1, t2);
     const c = this.add.container(W / 2, y - 60, items).setDepth(60).setAlpha(0);
     this.tweens.add({ targets: c, y, alpha: 1, duration: 260, ease: 'Back.out' });
-    this.tweens.add({ targets: c, alpha: 0, y: y - 40, delay: 1900, duration: 300, onComplete: () => c.destroy() });
+    // it stays about two seconds, or makes way sooner when another one is waiting
+    const shownAt = this.time.now;
+    const check = this.time.addEvent({
+      delay: 100,
+      loop: true,
+      callback: () => {
+        const age = this.time.now - shownAt;
+        if (age < 1900 && !(age >= 1000 && this.bannerQueue.length)) return;
+        check.remove();
+        this.tweens.add({ targets: c, alpha: 0, y: y - 40, duration: 260, onComplete: () => {
+          c.destroy();
+          this.nextBanner();
+        } });
+      },
+    });
   }
 
   showDiscovery(tier) {
@@ -2144,7 +2183,7 @@ export class GameScene extends Phaser.Scene {
     add(this.portrait(W / 2 - 150, 570, this.biggest, 38));
     add(this.text(W / 2 - 80, 536, 'BIGGEST', 18, '#b9a8e6'));
     add(this.text(W / 2 - 80, 558, TIERS[this.biggest].name, 32));
-    add(this.text(W / 2 - 80, 598, `Album ${this.seen.length} / ${TIERS.length}`, 18, '#b9a8e6'));
+    add(this.text(W / 2 - 80, 598, `${this.seen.length} discovered`, 18, '#b9a8e6'));
 
     let y = 720;
     if (!this.revived) {
@@ -2217,25 +2256,48 @@ export class GameScene extends Phaser.Scene {
     this.aiming = false;
     this.setPower(0);
     Sfx.click();
-    for (const kind of ALL_KINDS) if (!hasKindTextures(this, kind)) makeKindTextures(this, kind);
+    const found = this.found();
+    for (const kind of found) if (!hasKindTextures(this, kind)) makeKindTextures(this, kind);
     this.refreshStrip();
-    const items = this.panel(50, 170, W - 100, 940);
+    // the panel grows with what you have found; anything not yet found is not shown at all
+    const more = found.length < TIERS.length;
+    const cards = found.length + (more ? 1 : 0);
+    const cols = 4;
+    const rows = Math.ceil(cards / cols);
+    const cellW = 150;
+    const cellH = 158;
+    const h = 266 + rows * cellH;
+    const top = Math.round(H / 2 - 40 - h / 2);
+    const items = this.panel(50, top, W - 100, h);
     const add = (o) => {
       items.push(o.setDepth(OVERLAY));
       return o;
     };
-    add(this.text(W / 2, 222, 'STAR ALBUM', 44).setOrigin(0.5));
-    add(this.text(W / 2, 270, `${this.seen.length} of ${TIERS.length} discovered`, 22, '#b9a8e6').setOrigin(0.5));
-    TIERS.forEach((t, i) => {
-      const x = W / 2 + ((i % 3) - 1) * 190;
-      const y = 384 + Math.floor(i / 3) * 172;
-      const known = this.seen.includes(i);
-      const pic = add(this.portrait(x, y, i, 36));
-      if (!known) pic.setTintFill(0x1b0e3d);
-      add(this.text(x, y + 64, known ? t.name : '???', 22, known ? '#ffffff' : '#8f7fc2').setOrigin(0.5));
-      if (!known) add(this.text(x, y, '?', 44, '#8f7fc2').setOrigin(0.5));
+    add(this.text(W / 2, top + 58, 'STAR ALBUM', 44).setOrigin(0.5));
+    add(this.text(W / 2, top + 106, `${found.length} discovered`, 22, '#b9a8e6').setOrigin(0.5));
+    const cardAt = (i) => {
+      const row = Math.floor(i / cols);
+      const inRow = Math.min(cols, cards - row * cols);
+      return { x: W / 2 + (i % cols - (inRow - 1) / 2) * cellW, y: top + 200 + row * cellH };
+    };
+    found.forEach((tier, i) => {
+      const { x, y } = cardAt(i);
+      add(this.portrait(x, y, tier, 34));
+      add(this.text(x, y + 58, TIERS[tier].name, 20).setOrigin(0.5));
     });
-    const close = this.button(W / 2, 1050, 300, 76, 'CLOSE', 0x4c6ef5, () => {
+    if (more) {
+      // one mystery card: it says there is more, but not what, or how much
+      const { x, y } = cardAt(found.length);
+      const g = add(this.add.graphics());
+      g.fillStyle(0x140a33, 1);
+      g.fillCircle(x, y, 34);
+      g.lineStyle(3, 0xc9b8ff, 0.5);
+      g.strokeCircle(x, y, 34);
+      const q = add(this.text(x, y, '?', 40, '#c9b8ff').setOrigin(0.5));
+      this.tweens.add({ targets: q, alpha: 0.4, duration: 900, yoyo: true, repeat: -1 });
+      add(this.text(x, y + 58, 'Keep merging', 18, '#8f7fc2').setOrigin(0.5));
+    }
+    const close = this.button(W / 2, top + h - 66, 300, 76, 'CLOSE', 0x4c6ef5, () => {
       items.forEach((o) => o.destroy());
       // time spent in the album does not count against cooldowns, boosters or danger timers
       const pausedFor = this.time.now - pausedAt;

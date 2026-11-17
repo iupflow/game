@@ -136,7 +136,124 @@ function boom(gain = 0.25, delay = 0) {
   noise({ dur: 0.6, gain: gain * 0.6, delay, type: 'lowpass', f: 900, f2: 120, wet: 0.35 });
 }
 
-// A major pentatonic scale: any notes from it sound good together, so merges and combos make melodies.
+/** A tone whose filter keeps opening and closing: a "wah-wah" wobble. */
+function wah({ f, dur = 0.9, gain = 0.1, rate = 7, lo = 350, hi = 2600, type = 'sawtooth', delay = 0, wet = 0.3 }) {
+  if (!audio()) return;
+  const t = ac.currentTime + delay;
+  const o = ac.createOscillator();
+  o.type = type;
+  o.frequency.value = f;
+  const fl = ac.createBiquadFilter();
+  fl.type = 'lowpass';
+  fl.Q.value = 7;
+  fl.frequency.value = (lo + hi) / 2;
+  const lfo = ac.createOscillator();
+  lfo.frequency.value = rate;
+  const depth = ac.createGain();
+  depth.gain.value = (hi - lo) / 2;
+  lfo.connect(depth).connect(fl.frequency);
+  route(o.connect(fl).connect(envelope(t, gain, 0.03, dur)), wet);
+  o.start(t);
+  lfo.start(t);
+  o.stop(t + dur + 0.05);
+  lfo.stop(t + dur + 0.05);
+}
+
+/** Noise through a narrow, drifting band: wind, from a soft breath to a whistle. */
+function wind({ dur = 0.9, gain = 0.1, f = 800, drift = 400, rate = 1.2, q = 6, attack = 0.15, delay = 0, wet = 0.5 }) {
+  if (!audio()) return;
+  const t = ac.currentTime + delay;
+  const src = ac.createBufferSource();
+  src.buffer = noiseBuffer();
+  src.loop = true;
+  const fl = ac.createBiquadFilter();
+  fl.type = 'bandpass';
+  fl.Q.value = q;
+  fl.frequency.value = f;
+  const lfo = ac.createOscillator();
+  lfo.frequency.value = rate;
+  const depth = ac.createGain();
+  depth.gain.value = drift;
+  lfo.connect(depth).connect(fl.frequency);
+  route(src.connect(fl).connect(envelope(t, gain, attack, dur)), wet);
+  src.start(t, Math.random() * 0.5);
+  lfo.start(t);
+  src.stop(t + dur + 0.05);
+  lfo.stop(t + dur + 0.05);
+}
+
+/** A horn-like swell: a sawtooth whose filter opens quickly, then slowly closes. */
+function brass({ f, dur = 1.2, gain = 0.07, delay = 0, wet = 0.45 }) {
+  if (!audio()) return;
+  const t = ac.currentTime + delay;
+  const o = ac.createOscillator();
+  o.type = 'sawtooth';
+  o.frequency.value = f;
+  const fl = ac.createBiquadFilter();
+  fl.type = 'lowpass';
+  fl.Q.value = 2;
+  fl.frequency.setValueAtTime(f * 1.2, t);
+  fl.frequency.linearRampToValueAtTime(f * 7, t + 0.14);
+  fl.frequency.exponentialRampToValueAtTime(f * 1.5, t + dur);
+  route(o.connect(fl).connect(envelope(t, gain, 0.05, dur)), wet);
+  o.start(t);
+  o.stop(t + dur + 0.05);
+}
+
+let shaper = null;
+/** A gritty, distorted noise burst: rock and gravel. */
+function crunch({ dur = 0.2, gain = 0.14, f = 900, delay = 0, wet = 0.15 }) {
+  if (!audio()) return;
+  if (!shaper) {
+    shaper = new Float32Array(1024);
+    for (let i = 0; i < 1024; i++) {
+      const x = (i / 1023) * 2 - 1;
+      shaper[i] = Math.tanh(x * 6);
+    }
+  }
+  const t = ac.currentTime + delay;
+  const src = ac.createBufferSource();
+  src.buffer = noiseBuffer();
+  src.loop = true;
+  const ws = ac.createWaveShaper();
+  ws.curve = shaper;
+  const fl = ac.createBiquadFilter();
+  fl.type = 'bandpass';
+  fl.frequency.value = f;
+  fl.Q.value = 1.4;
+  // a choppy envelope: a few grains rather than one smooth hiss
+  const g = ac.createGain();
+  g.gain.setValueAtTime(0.0001, t);
+  for (let i = 0; i < 4; i++) {
+    const at = t + (i * dur) / 4;
+    g.gain.setValueAtTime(gain * (1 - i * 0.2), at);
+    g.gain.exponentialRampToValueAtTime(0.0005, at + dur / 5);
+  }
+  route(src.connect(ws).connect(fl).connect(g), wet);
+  src.start(t, Math.random() * 0.5);
+  src.stop(t + dur + 0.05);
+}
+
+/** A run of little water bloops. */
+function bubbles(n, base, delay = 0) {
+  for (let i = 0; i < n; i++) {
+    const f = base * (0.8 + Math.random() * 0.8);
+    tone({ f, f2: f * 1.9, dur: 0.07, gain: 0.07, delay: delay + i * 0.06 + Math.random() * 0.03, wet: 0.35 });
+  }
+}
+
+/** A radio-like run of short ticks, like the beat of a pulsar. */
+function pulses({ n = 8, f = 1300, gap = 0.09, gain = 0.07, delay = 0 }) {
+  for (let i = 0; i < n; i++) tone({ f, dur: 0.035, gain: gain * (1 - i / (n + 2)), type: 'square', delay: delay + i * gap * (1 + i * 0.08), wet: 0.3, filter: { type: 'lowpass', f: 3200 } });
+}
+
+/** An electric snap: a square chirp up and a crackle. */
+function zap(delay = 0) {
+  tone({ f: 220, f2: 2600, dur: 0.16, gain: 0.06, type: 'square', delay, wet: 0.2, filter: { type: 'lowpass', f: 4200 } });
+  noise({ dur: 0.14, gain: 0.06, type: 'highpass', f: 3500, delay, wet: 0.2 });
+}
+
+// A major pentatonic scale, so merges in a row and combos still sound musical.
 const SCALE = [0, 2, 4, 7, 9];
 function note(step) {
   const oct = Math.floor(step / 5);
@@ -144,62 +261,86 @@ function note(step) {
   return 261.63 * Math.pow(2, oct + SCALE[s] / 12); // step 0 = middle C
 }
 
-// One sound per merge, by the tier being merged. k raises the pitch for combos.
+// Every merge has its own kind of sound, not just its own pitch. All of them sit in the
+// range a phone speaker plays well. Indexed by the tier being merged; k raises the pitch for combos.
 const MERGE = [
-  // asteroids: two pebbles clacking together
+  // moons: a glassy ting
   (k) => {
-    noise({ dur: 0.05, gain: 0.14, type: 'bandpass', f: 2800, q: 4, wet: 0.1 });
-    pluck({ f: note(10 + k) });
+    bell({ f: note(17 + k), dur: 0.55, gain: 0.09, ratio: 7.1, index: 1.2, wet: 0.35 });
+    tone({ f: note(22 + k), dur: 0.18, gain: 0.03, delay: 0.03, wet: 0.4 });
   },
-  // moons: a dusty thud
+  // mercury: a metallic clink-clink
   (k) => {
-    noise({ dur: 0.12, gain: 0.12, type: 'lowpass', f: 700, wet: 0.1 });
-    pluck({ f: note(11 + k) });
+    bell({ f: note(14 + k) * 1.5, dur: 0.22, gain: 0.1, ratio: 5.43, index: 4, wet: 0.15 });
+    bell({ f: note(13 + k) * 1.5, dur: 0.22, gain: 0.08, ratio: 5.43, index: 4, delay: 0.07, wet: 0.15 });
+    noise({ dur: 0.03, gain: 0.08, type: 'highpass', f: 5000, wet: 0 });
   },
-  // mars: a warm marimba
+  // mars: a gravelly crunch
   (k) => {
-    tone({ f: note(12 + k), dur: 0.45, gain: 0.16 });
-    tone({ f: note(12 + k) * 4, dur: 0.07, gain: 0.05 });
-    noise({ dur: 0.08, gain: 0.06, f: 1200 });
+    crunch({ dur: 0.24, gain: 0.15, f: 900 + k * 80 });
+    pluck({ f: note(9 + k), gain: 0.1 });
   },
-  // venus: an airy swirl and a bell
+  // venus: a breathy swell of cloud
   (k) => {
-    noise({ dur: 0.45, gain: 0.07, type: 'bandpass', f: 600, f2: 2600, q: 1.4, wet: 0.45 });
-    bell({ f: note(13 + k), dur: 0.9 });
+    wind({ dur: 0.95, gain: 0.12, f: 900, drift: 500, rate: 1.5, q: 3 });
+    [0, 2].forEach((s) => tone({ f: note(12 + k + s), dur: 0.9, gain: 0.05, type: 'triangle', attack: 0.18, wet: 0.5 }));
   },
-  // earth: a watery bloop and a bell
+  // earth: a water bloop and bubbles
   (k) => {
-    tone({ f: 900, f2: 260, dur: 0.18, gain: 0.14, wet: 0.3 });
-    bell({ f: note(14 + k), dur: 1.1, delay: 0.04 });
+    tone({ f: 1100, f2: 260, dur: 0.16, gain: 0.13, wet: 0.3 });
+    bubbles(6, 500 + k * 60, 0.08);
   },
-  // neptune: an icy shimmer
+  // neptune: a whistling, icy wind and falling glass
   (k) => {
-    for (let i = 0; i < 4; i++) tone({ f: note(17 + k + i), dur: 0.5, gain: 0.04, delay: i * 0.05, wet: 0.6 });
-    bell({ f: note(15 + k), dur: 1.2 });
+    wind({ dur: 1, gain: 0.07, f: 1900, drift: 700, rate: 2.2, q: 14 });
+    for (let i = 0; i < 5; i++) tone({ f: note(22 + k - i), dur: 0.22, gain: 0.04, delay: 0.1 + i * 0.07, wet: 0.6 });
   },
-  // saturn: a big ringing bell over a low thump
+  // uranus: a wobbling wah-wah
   (k) => {
-    tone({ f: 130, f2: 70, dur: 0.3, gain: 0.2, wet: 0.1 });
-    bell({ f: note(11 + k), dur: 2.2, gain: 0.13, ratio: 2.76, index: 3 });
+    wah({ f: note(5 + k) / 2, dur: 0.95, gain: 0.11, rate: 7 });
+    wah({ f: note(7 + k) / 2, dur: 0.95, gain: 0.06, rate: 5.5, type: 'square' });
   },
-  // jupiter: a deep boom and a major chord swelling up
+  // saturn: a big ringing gong
   (k) => {
-    boom(0.22);
-    [0, 2, 4].forEach((s, i) => tone({ f: note(5 + k + s), type: 'triangle', dur: 1.5, gain: 0.07, attack: 0.1, delay: i * 0.03, wet: 0.55 }));
+    bell({ f: note(5 + k), dur: 3, gain: 0.14, ratio: 1.41, index: 5, wet: 0.6 });
+    bell({ f: note(5 + k) * 2.76, dur: 1.4, gain: 0.04, ratio: 1.41, index: 2, wet: 0.6 });
   },
-  // sun: a fiery whoosh and a bright chord
+  // jupiter: rolling thunder and horns
   (k) => {
-    noise({ dur: 0.9, gain: 0.12, type: 'bandpass', f: 300, f2: 3200, q: 0.8, attack: 0.12, wet: 0.45 });
-    [0, 2, 4, 5].forEach((s, i) => tone({ f: note(10 + k + s), type: 'triangle', dur: 1.6, gain: 0.06, attack: 0.15, delay: 0.1 + i * 0.04, wet: 0.6 }));
+    noise({ dur: 1.4, gain: 0.14, type: 'lowpass', f: 600, f2: 150, attack: 0.15, wet: 0.4 });
+    crunch({ dur: 0.3, gain: 0.07, f: 400, delay: 0.1 });
+    [0, 2, 4].forEach((s, i) => brass({ f: note(k + s), dur: 1.3, gain: 0.05, delay: 0.1 + i * 0.04 }));
   },
-  // red giant: a big burst and a rising shimmer
+  // sun: a roar of fire and a bright fanfare
   (k) => {
-    boom(0.3);
-    noise({ dur: 1.3, gain: 0.1, type: 'highpass', f: 2000, f2: 8000, attack: 0.2, wet: 0.6 });
-    for (let i = 0; i < 6; i++) bell({ f: note(15 + k + i), dur: 0.9, gain: 0.05, delay: 0.12 + i * 0.07 });
+    noise({ dur: 0.9, gain: 0.12, type: 'bandpass', f: 300, f2: 3500, q: 0.8, attack: 0.1, wet: 0.4 });
+    [0, 2, 4, 5, 7].forEach((s, i) => bell({ f: note(12 + k + s), dur: 0.9, gain: 0.07, delay: 0.12 + i * 0.08 }));
+    [0, 2, 4].forEach((s) => brass({ f: note(5 + k + s), dur: 1.4, gain: 0.04, delay: 0.5 }));
   },
-  // supernova: the black hole sounds take over
-  () => {},
+  // red giant: a slow, ominous swell
+  (k) => {
+    wah({ f: note(-2 + k), dur: 1.6, gain: 0.08, rate: 1.2, lo: 200, hi: 1200 });
+    [0, 3, 7].forEach((s) => tone({ f: 196 * Math.pow(2, (s + k) / 12), dur: 1.8, gain: 0.05, type: 'triangle', attack: 0.4, wet: 0.6 }));
+  },
+  // blue giant: crackling electric zaps and a high shimmer
+  (k) => {
+    zap(0);
+    zap(0.12);
+    zap(0.26);
+    noise({ dur: 1.1, gain: 0.06, type: 'highpass', f: 5000, attack: 0.3, wet: 0.6 });
+    bell({ f: note(20 + k), dur: 1.2, gain: 0.06, delay: 0.3 });
+  },
+  // supernova: an explosion with debris and a rising chord
+  (k) => {
+    boom(0.34);
+    noise({ dur: 1.2, gain: 0.1, type: 'highpass', f: 1500, f2: 7000, attack: 0.05, wet: 0.6 });
+    for (let i = 0; i < 8; i++) crunch({ dur: 0.06, gain: 0.05, f: 700 + Math.random() * 2000, delay: 0.1 + Math.random() * 0.6 });
+    [0, 2, 4, 7].forEach((s, i) => tone({ f: note(10 + k + s), dur: 1.4, gain: 0.05, type: 'triangle', attack: 0.2, delay: 0.3 + i * 0.1, wet: 0.6 }));
+  },
+  // pulsar: a run of radio pulses
+  (k) => {
+    pulses({ n: 10, f: 1200 + k * 60, gap: 0.08 });
+  },
 ];
 
 export const Sfx = {
