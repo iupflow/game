@@ -43,6 +43,7 @@ const STEP2 = STEP * STEP;
 const GRAVITY = 0.15; // pull toward the centre, in px per step^2
 const DROP_SPEED = 0.6; // a tap lets the planet go almost at rest: gravity does the rest
 const ZERO_G_DROP = 4; // in zero gravity there is no pull, so a tap gives it a push
+const HELD_KNOCK = 2.2; // a planet running into the waiting one faster than this knocks it loose
 const MIN_SPEED = 3; // launch speed range for a pull, in px per step
 const MAX_SPEED = 28;
 const PULL_DEAD = 18; // a drag shorter than this is a tap, not a pull
@@ -1723,6 +1724,8 @@ export class GameScene extends Phaser.Scene {
         }
       }
     }
+    // the planet waiting on the orbit is in its way too: it is knocked loose, then batted aside
+    if (this.held && this.state === 'aim' && Math.hypot(this.held.x - r.x, this.held.y - r.y) < r.r + this.held.r) this.releaseHeld();
     // gone once it is well past the field and moving away
     const ex = r.x - CX;
     const ey = r.y - CY;
@@ -1928,7 +1931,56 @@ export class GameScene extends Phaser.Scene {
       }
     }
     this.contacts = contacts;
+    if (this.held && this.state === 'aim') this.touchHeld();
     this.matter.world.step(STEP);
+  }
+
+  /**
+   * The planet waiting on the orbit is solid, not just a picture. A planet that runs into it
+   * knocks it loose into the field (it is in play from then on, and a new one comes), a twin
+   * merges with it, and a slow touch just eases the other planet off it.
+   */
+  touchHeld() {
+    const h = this.held;
+    for (const p of this.pieces) {
+      if (!p.body || p.merging || p.fusing) continue;
+      const b = p.body;
+      const sum = (p.r + h.r) * 0.92;
+      const dx = h.x - b.position.x;
+      const dy = h.y - b.position.y;
+      if (dx > sum || dx < -sum || dy > sum || dy < -sum) continue;
+      const d = Math.hypot(dx, dy) || 1;
+      if (d >= sum) continue;
+      const nx = dx / d; // from the planet toward the waiting one
+      const ny = dy / d;
+      const closing = b.velocity.x * nx + b.velocity.y * ny;
+      if (p.tier >= 0 && p.tier === h.tier) {
+        const w = this.releaseHeld();
+        w.merging = p.merging = true;
+        this.mergeQueue.push([p, w]);
+        return;
+      }
+      if (closing > HELD_KNOCK) {
+        const w = this.releaseHeld();
+        const m1 = b.mass;
+        const m2 = w.body.mass;
+        // a bouncy hit: the waiting planet takes some of the speed, the other bounces back
+        const give = (closing * 2 * m1) / (m1 + m2) * 0.8;
+        const lose = (closing * 2 * m2) / (m1 + m2) * 0.8;
+        this.matter.body.setVelocity(w.body, { x: nx * give, y: ny * give });
+        this.matter.body.setVelocity(b, { x: b.velocity.x - nx * lose, y: b.velocity.y - ny * lose });
+        const ang = Math.atan2(ny, nx);
+        p.squash(ang, Math.min(MAX_SQUASH, (closing * IMPACT_SQUASH * 2 * m2) / (m1 + m2)));
+        w.squash(ang, Math.min(MAX_SQUASH, (closing * IMPACT_SQUASH * 2 * m1) / (m1 + m2)));
+        Sfx.land(closing, w.r);
+        Haptics.medium();
+        return;
+      }
+      // a slow touch: the waiting planet does not budge; the other is eased off it
+      const depth = sum - d;
+      this.matter.body.setPosition(b, { x: b.position.x - nx * depth * 0.5, y: b.position.y - ny * depth * 0.5 });
+      if (closing > 0) this.matter.body.setVelocity(b, { x: b.velocity.x - nx * closing, y: b.velocity.y - ny * closing });
+    }
   }
 
   /**
@@ -2298,7 +2350,7 @@ export class GameScene extends Phaser.Scene {
         this.stepBombs(now);
         this.updateEvents(now, Math.min(delta, 50) * rate);
         this.checkPieces(now, Math.min(delta, 50) * rate);
-        if (this.state === 'flying' && now >= this.nextHeldAt) this.prepareHeld();
+        if (this.state === 'flying' && now >= this.nextHeldAt && !this.floatingNow()) this.prepareHeld(); // none while weightless
       }
       if (this.wrecker && steps > 0) this.emitDarkDust();
     }

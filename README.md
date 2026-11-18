@@ -151,6 +151,10 @@ The iOS and Android apps are built with Capacitor; see [BUILD.md](BUILD.md).
 - Buttons only react when the press starts on them, so a pull that ends over the bottom
   bar never triggers it
 - Swap: tap the NEXT planet to exchange it with the one waiting on the ring
+- The planet waiting on the orbit is solid: a planet that runs into it knocks it loose into the
+  field (it is in play from then on, and a new one comes), a twin that touches it merges with
+  it, and a slow touch just eases the other planet off it. Dark matter passing through knocks it
+  loose too
 - The field slowly rotates, so timing matters
 
 ## Special planets
@@ -182,19 +186,18 @@ announced with a banner and a countdown under the pause button. Events change th
 none of them gives boosters:
 
 - Meteor Shower (11 s): small planets streak in from outside the ring
-- Zero Gravity (about 9.5 s): the well goes dark, a wave pushes everything gently apart and the
-  planets float and tumble in a cool light for 7 seconds. Nothing is launched meanwhile:
-  instead, three planets can be moved by hand. Touch a floating planet to pick it up (that
-  uses one of the three moves), drag it (it is heavy, so it follows the finger slowly and
-  shoves others out of its way) and let go, or give it a gentle flick; drag it onto its twin to
-  merge them. The planet waiting on the orbit can be picked up too, so even the random next
-  planet can be put where it is wanted. Once the moves are used, the field just floats until
-  gravity returns. Which three planets to move is the decision. Each planet's nearest twin is shown by a
-  dotted line in its colour, and planets that have a twin wear a ring, so the pairs are easy to
-  see. Merges while weightless have twice the diamond luck. A ring round the well counts the
-  float down, the last three seconds out loud; then gravity comes back hard: a pull closes in
-  from the edges, light streaks into the well and the field slams together, so how the planets
-  were arranged decides what meets what. Hard hits spark and shake the screen. No countdown
+- Zero Gravity (about 8.5 s): the well goes dark, a wave pushes everything well apart and the
+  planets float and tumble in a cool light for 6 seconds. Nothing is launched and no new planet
+  comes meanwhile; the planet that was already waiting stays in play. Planets are moved by hand
+  instead, as many as you like: touch a floating planet (or the waiting one) to pick it up, drag
+  it (it is heavy, so it follows the finger slowly and shoves others out of its way) and let go,
+  or give it a gentle flick; drag it onto its twin to merge them. Slow currents keep every
+  floating planet wandering, so nothing stays where it was put and pairs drift apart again. Each
+  planet's nearest twin is shown by a dotted line in its colour, and planets that have a twin
+  wear a ring. Merges while weightless have twice the diamond luck. A ring round the well counts
+  the float down, the last three seconds out loud; then gravity comes back hard: a pull closes
+  in from the edges, light streaks into the well and the field slams together, so how the
+  planets were left decides what meets what. Hard hits spark and shake the screen. No countdown
   runs meanwhile
 
 Merges in quick succession get a cheer (NICE!, GREAT!, AMAZING!, STELLAR!), nothing more.

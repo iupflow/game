@@ -11,14 +11,14 @@ const TIER_COLOR = (tier) => TIERS[tier].color;
 
 export const EVENTS = {
   meteors: { name: 'METEOR SHOWER', text: 'Small planets rain in for a while', ms: 11000, color: '#ffb27a' },
-  zerog: { name: 'ZERO GRAVITY', text: 'Move 3 planets by hand · 2× diamond luck', ms: 9500, color: '#9fe8ff' },
+  zerog: { name: 'ZERO GRAVITY', text: 'Drag planets together · 2× diamond luck', ms: 8500, color: '#9fe8ff' },
 };
 const EVENTS_FROM = 4; // events start once an Earth has been made
 const FIRST_EVENT_MS = 40000; // of play
 const EVENT_GAP = [38000, 52000];
 const METEOR_EVERY = 850;
-const FLOAT_MS = 7000; // zero gravity: how long everything floats before gravity comes back
-const ZERO_G_MOVES = 3; // how many planets can be picked up and moved in one float
+const FLOAT_MS = 6000; // zero gravity: how long everything floats before gravity comes back
+const DRIFT_EVERY = 450; // while weightless, currents nudge every floating planet this often
 
 export const EventsMixin = {
   resetEvents() {
@@ -107,8 +107,8 @@ export const EventsMixin = {
    * No countdown runs meanwhile.
    */
   startZeroG(now) {
-    this.zeroG = { back: now + FLOAT_MS, returned: false, lastCount: 4, returnedAt: 0, shakeAt: 0, moves: ZERO_G_MOVES };
-    // no shots while weightless: a few planets are moved by hand instead
+    this.zeroG = { back: now + FLOAT_MS, returned: false, lastCount: 4, returnedAt: 0, shakeAt: 0, driftAt: now + DRIFT_EVERY };
+    // no shots and no new planets while weightless: the planets are moved by hand instead
     this.aiming = false;
     this.setPower(0);
     if (this.zeroHint) this.zeroHint.destroy();
@@ -120,7 +120,7 @@ export const EventsMixin = {
       const dx = p.x - this.CX;
       const dy = p.y - this.CY;
       const d = Math.hypot(dx, dy) || 1;
-      const out = 0.9 + this.rng() * 1;
+      const out = 1.6 + this.rng() * 1.2; // they drift well apart: bringing twins together takes work
       const side = (this.rng() - 0.5) * 1.6;
       const v = p.body.velocity;
       this.matter.body.setVelocity(p.body, { x: v.x + (dx / d) * out - (dy / d) * side, y: v.y + (dy / d) * out + (dx / d) * side });
@@ -156,6 +156,17 @@ export const EventsMixin = {
         this.zeroCount(sec);
       }
       if (left <= 0) this.gravityReturns(now);
+      else if (now >= z.driftAt) {
+        // slow currents keep every floating planet wandering, so nothing stays where it was put
+        z.driftAt = now + DRIFT_EVERY;
+        for (const p of this.pieces) {
+          if (!p.body || (this.grab && this.grab.p === p)) continue;
+          const a = Math.random() * Math.PI * 2;
+          const k = 0.25 + Math.random() * 0.3;
+          const v = p.body.velocity;
+          this.matter.body.setVelocity(p.body, { x: v.x * 0.9 + Math.cos(a) * k, y: v.y * 0.9 + Math.sin(a) * k });
+        }
+      }
     }
     // floating specks drifting up while it lasts
     if (!z.returned && Math.random() < 0.45) {
@@ -233,12 +244,11 @@ export const EventsMixin = {
     }
   },
 
-  /** Under the field while weightless: how many moves are left. */
+  /** Under the field while weightless: what to do. */
   refreshZeroHint() {
     const z = this.zeroG;
     if (!this.zeroHint || !z) return;
-    const n = z.moves;
-    this.zeroHint.setText(n > 0 ? `Drag planets together · ${n} move${n > 1 ? 's' : ''} left` : 'No moves left · wait for gravity');
+    this.zeroHint.setText('Drag planets to pair them up');
   },
 
   /** Weightless right now (the float, before gravity comes back)? */
@@ -252,8 +262,6 @@ export const EventsMixin = {
    * orbit (which then comes off it to be placed by hand). Returns true when something was picked up.
    */
   tryGrab(pointer) {
-    const z = this.zeroG;
-    if (!z.moves) return false; // all moves used: it just floats until gravity returns
     const f = this.toField(pointer.worldX, pointer.worldY);
     const slop = 20 / this.fieldScale;
     // whichever is nearest the finger: a floating planet, or the one waiting on the orbit
@@ -273,9 +281,6 @@ export const EventsMixin = {
     this.grab = { p: best, x: f.x, y: f.y };
     best.popTarget = 1.08;
     best.flying = false;
-    z.moves--;
-    this.refreshZeroHint();
-    this.jelly.pop(this.zeroHint, 0.1);
     Sfx.boing(3);
     Haptics.light();
     return true;
@@ -285,6 +290,7 @@ export const EventsMixin = {
   releaseHeld() {
     const b = this.held;
     this.held = null;
+    this.aiming = false;
     this.setPower(0);
     b.addBody();
     b.flying = false;
