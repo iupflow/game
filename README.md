@@ -186,7 +186,10 @@ announced with a banner and a countdown under the pause button. Events change th
 none of them gives boosters:
 
 - Meteor Shower (11 s): small planets streak in fast from outside the ring, about two a second,
-  and hit the field in a burst of hot sparks with a small jolt
+  all from one side of the sky, which glows warm while it lasts. Each meteor has a glowing head
+  and a fiery tail that stretches with its speed and sheds sparks; far away, more of the shower
+  streaks across the sky. Each one hits the field in a burst of hot sparks, a ring of heat and a
+  few rising embers, with a small jolt
 - Solar Wind (9 s): a wind sweeps across the screen from one side, in gusts, with streaks of
   light racing across and arrows showing its way at the start. Every planet is pushed downwind
   and leans into it like jelly, so the cluster slides toward one edge of the ring, where planets

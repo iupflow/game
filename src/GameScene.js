@@ -191,6 +191,17 @@ export class GameScene extends Phaser.Scene {
     this.playMs = 0;
     this.event = null;
     this.zeroG = null;
+    // made when first needed; a restarted scene must make them again, not draw on the old ones
+    this.bombGfx = null;
+    this.zeroGfx = null;
+    this.grabGfx = null;
+    this.zeroTint = null;
+    this.zeroHint = null;
+    this.grab = null;
+    this.wind = null;
+    this.windFx = null;
+    this.meteorFx = null;
+    this.meteorGlow = null;
     this.rng = Math.random; // the launcher's dice; seeded in the daily challenge
     this.rule = null; // the daily challenge's twist
     this.mode = 'normal';
@@ -2380,6 +2391,7 @@ export class GameScene extends Phaser.Scene {
     this.drawDanger(now);
     this.drawBeam(now);
     this.skinTrail(now);
+    this.stepMeteorFx();
     if (this.inGame && now >= this.saveAt) {
       this.saveAt = now + 4000;
       this.saveGame();

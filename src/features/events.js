@@ -20,6 +20,31 @@ const FLOAT_MS = 5000; // zero gravity: how long everything floats before gravit
 const WIND_PUSH = 0.09; // solar wind: its push at full strength, in px per step^2 (gravity is 0.15)
 const DRIFT_EVERY = 450; // while weightless, currents nudge every floating planet this often
 
+/** A fiery tail: transparent at the back, white-hot at the head (on the right). */
+function meteorTail(scene) {
+  const key = 'meteor_tail';
+  if (scene.textures.exists(key)) return key;
+  const w = 160;
+  const h = 28;
+  const tex = scene.textures.createCanvas(key, Math.ceil(w * TEX_SCALE), Math.ceil(h * TEX_SCALE));
+  const ctx = tex.getContext();
+  ctx.scale(TEX_SCALE, TEX_SCALE);
+  const g = ctx.createLinearGradient(0, 0, w, 0);
+  g.addColorStop(0, 'rgba(255,80,30,0)');
+  g.addColorStop(0.5, 'rgba(255,130,50,.5)');
+  g.addColorStop(0.85, 'rgba(255,205,120,.9)');
+  g.addColorStop(1, 'rgba(255,250,225,1)');
+  ctx.fillStyle = g;
+  ctx.beginPath();
+  ctx.moveTo(0, h / 2);
+  ctx.lineTo(w - h / 2, 2);
+  ctx.arc(w - h / 2, h / 2, h / 2 - 2, -Math.PI / 2, Math.PI / 2);
+  ctx.closePath();
+  ctx.fill();
+  tex.refresh();
+  return key;
+}
+
 export const EventsMixin = {
   resetEvents() {
     this.event = null;
@@ -59,6 +84,7 @@ export const EventsMixin = {
     Sfx.event();
     Haptics.medium();
     if (id === 'zerog') this.startZeroG(now);
+    if (id === 'meteors') this.startMeteors();
     if (id === 'wind') this.startWind(now);
   },
 
@@ -70,21 +96,84 @@ export const EventsMixin = {
     }
     if (ev.id === 'zerog') this.tickZeroG(now);
     if (ev.id === 'wind') this.tickWind(now);
-    // meteors leave fiery trails while they fly
+    // meteors shed sparks as they fly
     if (now - ev.lastFx > 45) {
       ev.lastFx = now;
       for (const p of this.pieces) {
         if (!p.meteor || !p.flying) continue;
         const at = this.toScreen(p.x, p.y);
-        const d = this.add.image(at.x, at.y, 'dot').setTint(Math.random() < 0.5 ? 0xffb35a : 0xffe08a).setBlendMode(Phaser.BlendModes.ADD).setDepth(19).setScale((0.35 + Math.random() * 0.25) / TEX_SCALE);
-        this.tweens.add({ targets: d, alpha: 0, scale: 0.05 / TEX_SCALE, duration: 420, onComplete: () => d.destroy() });
+        const d = this.add.image(at.x + (Math.random() - 0.5) * 10, at.y + (Math.random() - 0.5) * 10, Math.random() < 0.3 ? 'spark' : 'dot').setTint(Math.random() < 0.5 ? 0xffb35a : 0xffe08a).setBlendMode(Phaser.BlendModes.ADD).setDepth(19).setScale((0.28 + Math.random() * 0.22) / TEX_SCALE);
+        this.tweens.add({ targets: d, alpha: 0, scale: 0.04 / TEX_SCALE, y: d.y + 6, duration: 480, onComplete: () => d.destroy() });
       }
+    }
+    // and far away, more of the shower streaks across the sky
+    if (ev.id === 'meteors' && now - (ev.skyAt || 0) > 130) {
+      ev.skyAt = now;
+      const ang = ev.radiant + Math.PI + (Math.random() - 0.5) * 0.3;
+      const x = Math.random() * this.W;
+      const y = 150 + Math.random() * (this.H - 300);
+      const len = 0.3 + Math.random() * 0.35;
+      const st = this.add.image(x, y, meteorTail(this)).setOrigin(1, 0.5).setRotation(ang).setScale(len / TEX_SCALE, 0.1 / TEX_SCALE).setAlpha(0).setBlendMode(Phaser.BlendModes.ADD).setDepth(-5);
+      const d = 160 + Math.random() * 140;
+      this.tweens.add({ targets: st, x: x + Math.cos(ang) * d, y: y + Math.sin(ang) * d, duration: 520, ease: 'Sine.in', onComplete: () => st.destroy() });
+      this.tweens.add({ targets: st, alpha: { from: 0, to: 0.75 }, duration: 180, yoyo: true, hold: 160 });
+    }
+  },
+
+  /** A meteor shower comes from one side (its radiant), and that edge of the sky glows warm. */
+  startMeteors() {
+    const ev = this.event;
+    ev.radiant = this.rng() * Math.PI * 2; // on screen
+    const gx = this.W / 2 + Math.cos(ev.radiant) * 430;
+    const gy = this.CY + Math.sin(ev.radiant) * 540;
+    if (this.meteorGlow) this.meteorGlow.destroy();
+    const glow = (this.meteorGlow = this.add.image(gx, gy, 'soft').setTint(0xff7a2a).setBlendMode(Phaser.BlendModes.ADD).setDepth(-5).setScale(7 / TEX_SCALE).setAlpha(0));
+    this.tweens.add({ targets: glow, alpha: 0.32, duration: 900 });
+    this.tweens.add({ targets: glow, scale: 8.2 / TEX_SCALE, duration: 1500, yoyo: true, repeat: -1, ease: 'Sine.inOut' });
+  },
+
+  /**
+   * Every frame: each meteor in flight has a glowing head and a fiery tail that stretches with its
+   * speed. When it lands (or is merged away) they fade.
+   */
+  stepMeteorFx() {
+    if (!this.meteorFx) this.meteorFx = new Map();
+    const fx = this.meteorFx;
+    for (const p of this.pieces) {
+      if (!p.meteor || !p.flying || !p.body || fx.has(p)) continue;
+      const tail = this.add.image(0, 0, meteorTail(this)).setOrigin(1, 0.5).setBlendMode(Phaser.BlendModes.ADD).setDepth(19);
+      const head = this.add.image(0, 0, 'soft').setTint(0xffa040).setBlendMode(Phaser.BlendModes.ADD).setDepth(19);
+      fx.set(p, { tail, head });
+    }
+    const s = this.fieldScale;
+    for (const [p, f] of fx) {
+      if (!p.body || !p.flying) {
+        fx.delete(p);
+        this.tweens.add({ targets: [f.tail, f.head], alpha: 0, duration: 200, onComplete: () => {
+          f.tail.destroy();
+          f.head.destroy();
+        } });
+        continue;
+      }
+      const at = this.toScreen(p.x, p.y);
+      const v = p.body.velocity;
+      const speed = Math.hypot(v.x, v.y);
+      const ang = Math.atan2(v.y, v.x) + this.worldRot;
+      const r = p.rv * s;
+      f.tail.setPosition(at.x + Math.cos(ang) * r * 0.4, at.y + Math.sin(ang) * r * 0.4).setRotation(ang).setScale(Math.min(1.5, speed / 9) / TEX_SCALE, (r * 1.9) / 28 / TEX_SCALE);
+      f.head.setPosition(at.x, at.y).setScale((r * 2.6) / 64 / TEX_SCALE).setAlpha(0.65 + 0.2 * Math.sin(this.time.now * 0.03));
     }
   },
 
   endEvent() {
     this.event = null;
     this.stopWind();
+    if (this.meteorGlow) {
+      const glow = this.meteorGlow;
+      this.meteorGlow = null;
+      this.tweens.killTweensOf(glow);
+      this.tweens.add({ targets: glow, alpha: 0, duration: 800, onComplete: () => glow.destroy() });
+    }
     if (this.grab) this.dropGrab();
     this.clearZeroHint();
     this.zeroG = null;
@@ -109,6 +198,13 @@ export const EventsMixin = {
     }
     const flash = this.add.image(at.x, at.y, 'soft').setTint(0xffc27a).setBlendMode(ADD).setDepth(40).setScale((p.rv * this.fieldScale * 1.2) / 64 / TEX_SCALE).setAlpha(0.6);
     this.tweens.add({ targets: flash, alpha: 0, scale: flash.scale * 1.6, duration: 260, onComplete: () => flash.destroy() });
+    const r = p.rv * this.fieldScale;
+    const ring = this.add.circle(at.x, at.y, r * 0.9).setStrokeStyle(2.5, 0xffb35a, 0.9).setDepth(40).setBlendMode(ADD);
+    this.tweens.add({ targets: ring, radius: r * 1.9, alpha: 0, duration: 380, ease: 'Cubic.out', onComplete: () => ring.destroy() });
+    for (let i = 0; i < 4; i++) {
+      const e = this.add.image(at.x + (Math.random() - 0.5) * r, at.y + (Math.random() - 0.5) * r * 0.6, 'dot').setTint(0xff9a3a).setBlendMode(ADD).setDepth(40).setScale(0.22 / TEX_SCALE);
+      this.tweens.add({ targets: e, y: e.y - 26 - Math.random() * 18, x: e.x + (Math.random() - 0.5) * 16, alpha: 0, duration: 900 + Math.random() * 400, ease: 'Sine.out', onComplete: () => e.destroy() });
+    }
     const now = this.time.now;
     if (now - (this.meteorShakeAt || 0) > 150) {
       this.meteorShakeAt = now;
@@ -118,7 +214,8 @@ export const EventsMixin = {
 
   /** A small planet (the smallest the launcher gives) streaks in from outside the ring. */
   dropMeteor(now) {
-    const a = this.rng() * Math.PI * 2;
+    const ev = this.event;
+    const a = (ev && ev.radiant !== undefined ? ev.radiant + (this.rng() - 0.5) * 1.6 : this.rng() * Math.PI * 2) - this.worldRot;
     const far = (this.ringScreen() + 150) / this.fieldScale;
     const p = this.spawnPiece(this.CX + Math.cos(a) * far, this.CY + Math.sin(a) * far, this.launchLow());
     const aim = a + Math.PI + (this.rng() - 0.5) * 0.5;
