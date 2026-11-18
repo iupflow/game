@@ -181,12 +181,18 @@ announced with a banner and a countdown under the pause button. Events change th
 none of them gives boosters:
 
 - Meteor Shower (11 s): small planets streak in from outside the ring
-- Zero Gravity (7.5 s): the well goes dark, a wave pushes everything apart and the planets float
-  and tumble in a cool light for 5 seconds. Shots fly straight with nothing pulling them, so
-  floating planets can be knocked into each other like billiard balls. A ring round the well
-  counts the float down, the last three seconds out loud; then gravity comes back hard: a pull
-  closes in from the edges, light streaks into the well and the field slams together in a new
-  order, hard hits sparking and shaking the screen. No countdown runs meanwhile
+- Zero Gravity (about 10 s): the well goes dark, a wave pushes everything gently apart and the
+  planets float and tumble in a cool light for 8 seconds. Nothing is launched meanwhile: the
+  field is yours to rearrange by hand. Touch a floating planet to pick it up, drag it (it shoves
+  others out of its way) and let go, or flick it; drag it onto its twin to merge them. The
+  planet waiting on the orbit can be dragged straight into the field too, so even the random
+  next planet can be put exactly where it is wanted. Each planet's nearest twin is shown by a
+  dotted line in its colour, and planets that have a twin wear a ring, so the pairs are easy to
+  see. Merges while weightless have twice the diamond luck. A ring round the well counts the
+  float down, the last three seconds out loud; then gravity comes back hard: a pull closes in
+  from the edges, light streaks into the well and the field slams together, so how the planets
+  were arranged decides what meets what. Hard hits spark and shake the screen. No countdown
+  runs meanwhile
 
 Merges in quick succession get a cheer (NICE!, GREAT!, AMAZING!, STELLAR!), nothing more.
 

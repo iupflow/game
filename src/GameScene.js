@@ -324,6 +324,11 @@ export class GameScene extends Phaser.Scene {
         if (!over.length) this.pickTarget(p);
         return;
       }
+      // weightless: planets are picked up and moved by hand, nothing is launched
+      if (this.floatingNow()) {
+        if (!over.length && (this.state === 'aim' || this.state === 'flying')) this.tryGrab(p);
+        return;
+      }
       if (over.length || this.state !== 'aim' || !this.held) return;
       this.aiming = true;
       this.pulled = false;
@@ -331,9 +336,14 @@ export class GameScene extends Phaser.Scene {
       this.setPower(0);
     });
     this.input.on('pointermove', (p) => {
-      if (this.aiming) this.updatePull(p);
+      if (this.grab) this.moveGrab(p);
+      else if (this.aiming) this.updatePull(p);
     });
     const release = (p) => {
+      if (this.grab) {
+        this.dropGrab();
+        return;
+      }
       if (!this.aiming) return;
       this.updatePull(p);
       this.aiming = false;
@@ -1780,6 +1790,7 @@ export class GameScene extends Phaser.Scene {
 
   /** One fixed step: gravity toward the well, springy skins between planets, then the hard cores. */
   physicsStep(now) {
+    if (this.grab) this.stepGrab();
     const list = this.pieces;
     const crunch = this.state === 'crunch';
     const scattering = now < this.scatterUntil;
@@ -2051,6 +2062,7 @@ export class GameScene extends Phaser.Scene {
   /** Two supernovas collapse: the hole swallows the whole field, then a new universe begins. */
   startCrunch(x, y) {
     const now = this.time.now;
+    if (this.zeroG && this.event) this.endEvent(); // the black hole's pull wins over weightlessness
     this.hole = new Planet(this, HOLE, x, y);
     this.hole.pop = 0.2;
     this.hole.pv = 0.2;
@@ -2754,6 +2766,7 @@ export class GameScene extends Phaser.Scene {
     const pausedAt = this.time.now;
     this.state = 'paused';
     this.aiming = false;
+    if (this.grab) this.dropGrab();
     this.setPower(0);
     if (this.targeting) this.cancelTargeting();
     return () => {

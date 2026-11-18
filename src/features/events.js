@@ -4,17 +4,20 @@
 import Phaser from 'phaser';
 import { Sfx } from '../sfx.js';
 import { Haptics } from '../haptics.js';
-import { TEX_SCALE } from '../art.js';
+import { TEX_SCALE, TIERS } from '../art.js';
+import { mix } from '../jelly.js';
+
+const TIER_COLOR = (tier) => TIERS[tier].color;
 
 export const EVENTS = {
   meteors: { name: 'METEOR SHOWER', text: 'Small planets rain in for a while', ms: 11000, color: '#ffb27a' },
-  zerog: { name: 'ZERO GRAVITY', text: 'Planets float free: shoot to knock them together!', ms: 7500, color: '#9fe8ff' },
+  zerog: { name: 'ZERO GRAVITY', text: 'Drag planets together · 2× diamond luck', ms: 10500, color: '#9fe8ff' },
 };
 const EVENTS_FROM = 4; // events start once an Earth has been made
 const FIRST_EVENT_MS = 40000; // of play
 const EVENT_GAP = [38000, 52000];
 const METEOR_EVERY = 850;
-const FLOAT_MS = 5000; // zero gravity: how long everything floats before gravity comes back
+const FLOAT_MS = 8000; // zero gravity: how long everything floats before gravity comes back
 
 export const EventsMixin = {
   resetEvents() {
@@ -68,6 +71,8 @@ export const EventsMixin = {
 
   endEvent() {
     this.event = null;
+    if (this.grab) this.dropGrab();
+    this.clearZeroHint();
     this.zeroG = null;
     if (this.zeroTint) {
       this.zeroTint.destroy();
@@ -102,12 +107,18 @@ export const EventsMixin = {
    */
   startZeroG(now) {
     this.zeroG = { back: now + FLOAT_MS, returned: false, lastCount: 4, returnedAt: 0, shakeAt: 0 };
+    // no shots while weightless: planets are moved by hand instead
+    this.aiming = false;
+    this.setPower(0);
+    if (this.zeroHint) this.zeroHint.destroy();
+    this.zeroHint = this.text(this.W / 2, 1032, 'Drag planets to pair them up', 24, '#bff2ff').setOrigin(0.5).setDepth(42).setStroke('#0b3a5a', 6);
+    this.tweens.add({ targets: this.zeroHint, alpha: 0.45, duration: 700, yoyo: true, repeat: -1 });
     for (const p of this.pieces) {
       if (!p.body) continue;
       const dx = p.x - this.CX;
       const dy = p.y - this.CY;
       const d = Math.hypot(dx, dy) || 1;
-      const out = 1.8 + this.rng() * 1.8;
+      const out = 0.9 + this.rng() * 1;
       const side = (this.rng() - 0.5) * 1.6;
       const v = p.body.velocity;
       this.matter.body.setVelocity(p.body, { x: v.x + (dx / d) * out - (dy / d) * side, y: v.y + (dy / d) * out + (dx / d) * side });
@@ -169,6 +180,8 @@ export const EventsMixin = {
     const z = this.zeroG;
     z.returned = true;
     z.returnedAt = now;
+    this.dropGrab();
+    this.clearZeroHint();
     const CX = this.CX;
     const CY = this.CY;
     const ADD = Phaser.BlendModes.ADD;
@@ -218,11 +231,170 @@ export const EventsMixin = {
     }
   },
 
+  /** Weightless right now (the float, before gravity comes back)? */
+  floatingNow() {
+    const z = this.zeroG;
+    return !!z && !z.returned && this.time.now < z.back;
+  },
+
+  /**
+   * While weightless, a touch picks up the planet under the finger, or the planet waiting on the
+   * orbit (which then comes off it to be placed by hand). Returns true when something was picked up.
+   */
+  tryGrab(pointer) {
+    const f = this.toField(pointer.worldX, pointer.worldY);
+    const slop = 20 / this.fieldScale;
+    // whichever is nearest the finger: a floating planet, or the one waiting on the orbit
+    const candidates = this.pieces.filter((p) => p.body && !p.merging);
+    if (this.held && this.state === 'aim') candidates.push(this.held);
+    let best = null;
+    let bestD = Infinity;
+    for (const p of candidates) {
+      const d = Math.hypot(p.x - f.x, p.y - f.y) - p.r;
+      if (d < slop && d < bestD) {
+        best = p;
+        bestD = d;
+      }
+    }
+    if (!best) return false;
+    if (best === this.held) best = this.releaseHeld();
+    this.grab = { p: best, x: f.x, y: f.y };
+    best.popTarget = 1.08;
+    best.flying = false;
+    this.zeroG.grabbed = (this.zeroG.grabbed || 0) + 1;
+    Sfx.boing(3);
+    Haptics.light();
+    return true;
+  },
+
+  /** The waiting planet comes off the orbit into the field, to be placed by hand. */
+  releaseHeld() {
+    const b = this.held;
+    this.held = null;
+    this.setPower(0);
+    b.addBody();
+    b.flying = false;
+    b.born = this.time.now;
+    this.pieces.push(b);
+    if (b.tier > this.biggest) this.biggest = b.tier;
+    this.state = 'flying';
+    this.nextHeldAt = this.time.now + 450;
+    return b;
+  },
+
+  moveGrab(pointer) {
+    const f = this.toField(pointer.worldX, pointer.worldY);
+    this.grab.x = f.x;
+    this.grab.y = f.y;
+  },
+
+  /** Every physics step: the planet in hand follows the finger, pushing others out of its way. */
+  stepGrab() {
+    const g = this.grab;
+    if (!g.p.body || g.p.merging) {
+      this.grab = null;
+      return;
+    }
+    const b = g.p.body;
+    let vx = (g.x - b.position.x) * 0.36;
+    let vy = (g.y - b.position.y) * 0.36;
+    const sp = Math.hypot(vx, vy);
+    if (sp > 20) {
+      vx *= 20 / sp;
+      vy *= 20 / sp;
+    }
+    this.matter.body.setVelocity(b, { x: vx, y: vy });
+  },
+
+  /** Let go: it keeps drifting the way it was moving (a flick throws it). */
+  dropGrab() {
+    const g = this.grab;
+    this.grab = null;
+    if (!g || !g.p.body) return;
+    g.p.popTarget = 1;
+    const v = g.p.body.velocity;
+    const sp = Math.hypot(v.x, v.y);
+    if (sp > 12) this.matter.body.setVelocity(g.p.body, { x: (v.x * 12) / sp, y: (v.y * 12) / sp });
+  },
+
+  clearZeroHint() {
+    if (!this.zeroHint) return;
+    this.tweens.killTweensOf(this.zeroHint);
+    this.zeroHint.destroy();
+    this.zeroHint = null;
+  },
+
+  /**
+   * While weightless, each planet is joined to its nearest twin (the planet waiting on the orbit
+   * included) by a dotted line in its colour, and planets that have a twin wear a ring, so the
+   * pairs to bring together are easy to see; the planet in hand gets a bright ring.
+   */
+  drawTwins(now) {
+    if (!this.twinGfx) this.twinGfx = this.add.graphics().setDepth(36);
+    const g = this.twinGfx;
+    g.clear();
+    if (!this.floatingNow()) return;
+    const s = this.fieldScale;
+    const list = this.pieces.filter((p) => p.tier >= 0 && p.body && !p.merging);
+    if (this.held && this.held.tier >= 0) list.push(this.held);
+    const done = new Set();
+    const pulse = 0.5 + 0.5 * Math.sin(now * 0.006);
+    for (const p of list) {
+      if (done.has(p)) continue;
+      let twin = null;
+      let best = Infinity;
+      for (const q of list) {
+        if (q === p || q.tier !== p.tier || done.has(q)) continue;
+        const d = Math.hypot(q.x - p.x, q.y - p.y);
+        if (d < best) {
+          best = d;
+          twin = q;
+        }
+      }
+      if (!twin) continue;
+      done.add(p);
+      done.add(twin);
+      const color = mix(TIER_COLOR(p.tier), 0xffffff, 0.35);
+      const a = this.toScreen(p.x, p.y);
+      const b = this.toScreen(twin.x, twin.y);
+      for (const [o, at] of [[p, a], [twin, b]]) {
+        g.lineStyle(3, color, 0.55 + 0.35 * pulse);
+        g.strokeCircle(at.x, at.y, o.rv * s + 5 + 2 * pulse);
+      }
+      const dx = b.x - a.x;
+      const dy = b.y - a.y;
+      const len = Math.hypot(dx, dy) || 1;
+      const from = p.rv * s + 9;
+      const to = len - twin.rv * s - 9;
+      if (to <= from) continue;
+      const shift = (now * 0.03) % 16;
+      for (const [width, c, alpha] of [[6, 0x0b0820, 0.45], [3, color, 0.95]]) {
+        g.lineStyle(width, c, alpha);
+        for (let d = from + shift - 16; d < to; d += 16) {
+          const d0 = Math.max(from, d);
+          const d1 = Math.min(to, d + 8);
+          if (d1 <= d0) continue;
+          g.beginPath();
+          g.moveTo(a.x + (dx * d0) / len, a.y + (dy * d0) / len);
+          g.lineTo(a.x + (dx * d1) / len, a.y + (dy * d1) / len);
+          g.strokePath();
+        }
+      }
+    }
+    if (this.grab && this.grab.p.body) {
+      const p = this.grab.p;
+      const at = this.toScreen(p.x, p.y);
+      g.lineStyle(3, 0xffffff, 0.9);
+      g.strokeCircle(at.x, at.y, p.rv * s + 9);
+    }
+  },
+
   /** Every frame while floating: a ring round the well shows how long until gravity returns. */
   drawZeroG(now) {
     if (!this.zeroGfx) this.zeroGfx = this.add.graphics().setDepth(36).setBlendMode(Phaser.BlendModes.ADD);
     const g = this.zeroGfx;
     g.clear();
+    this.drawTwins(now);
     const z = this.zeroG;
     if (!z || z.returned) return;
     const left = Math.max(0, (z.back - now) / FLOAT_MS);
@@ -249,7 +421,12 @@ export const EventsMixin = {
       this.eventLabel.setVisible(false);
       return;
     }
-    const left = Math.max(0, Math.ceil((ev.until - this.playMs) / 1000));
+    const z = this.zeroG;
+    if (ev.id === 'zerog' && z && z.returned) {
+      this.eventLabel.setVisible(false); // gravity is back: nothing left to count
+      return;
+    }
+    const left = Math.max(0, Math.ceil((ev.id === 'zerog' && z ? z.back - this.time.now : ev.until - this.playMs) / 1000));
     this.eventLabel.setVisible(true).setText(`${EVENTS[ev.id].name}  ${left}s`).setColor(EVENTS[ev.id].color);
   },
 };
