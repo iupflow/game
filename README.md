@@ -214,20 +214,20 @@ planet leaves:
 | Skin | Price | Planets | Merge | Trail |
 | ---- | ----- | ------- | ----- | ----- |
 | Classic | free | soft painted planets | a glow, a fine ring, sparks; rays for stars | – |
-| Kawaii | 120 | milky pastels with sparkles, a soft outline and a big toy shine, faces that blink and look startled; extra squishy, little hops at rest | hearts pop out and float up | little hearts |
+| Kawaii | 120 | each body its own pastel colour and its own face: a sleepy lilac Moon, a shy latte Mercury, a coral Mars going "oh", a butter Venus with heart eyes, a grinning Earth, a periwinkle Neptune with a cat's mouth, a winking aqua Uranus, an apricot Saturn smiling, a strawberry Jupiter with its tongue out, a lemon Sun with sparkling eyes, a flustered rose Red Giant, a cool Blue Giant, an amazed Supernova and a dizzy mint Pulsar. Sparkles, a soft outline and a big toy shine; they blink and look startled when squashed; extra squishy, little hops at rest | hearts pop out and float up | little hearts |
 | Jelly Candy | 160 | a flavour each: sugared gumdrop with sprinkles, caramel, strawberry and blueberry swirls, lemon drop, blue raspberry marble, peach jelly with a candy-striped ring, a gobstopper, orange, cherry and blue jellies, cotton candy, a rainbow lollipop; glassy shine, squishy | a glossy ring and sprinkles that spin and drop | sugar and sprinkles |
-| Pixel | 160 | real pixel art on one grid, a small palette, dark outline and stepped shading that stay level on screen; stiffer | squares hop out in steps, a pixel ring grows in steps | stepped pixels |
-| Neon | 200 | dark glass traced with glowing grid and contour lines in the planet's colour, neon rings and halo; flickers like a neon tube now and then | jagged sparks of electricity crackle out | a glowing streak |
+| Pixel | 160 | real pixel art on one grid, a small palette (finer shades for the stars), dark outline and stepped shading that stay level on screen; stiffer | squares hop out in steps, a pixel ring grows in steps | stepped pixels |
+| Neon | 200 | dark glass over a faint grid, each body in its own colour with lines drawn from its own features: crater rims on the Moon and Mercury, canyons and polar caps on Mars, swirling clouds on Venus, Earth's coastlines, Neptune's bands and dark spot, Uranus's upright rings, Saturn's bands and ring, Jupiter's belts and great spot, the Sun's glowing rings, the Red Giant's boiling cells, a starburst, the Supernova's shock shells, the Pulsar's magnetic loops. Neon halo; flickers like a neon tube now and then | jagged sparks of electricity crackle out | a glowing streak |
 
 Skies (backgrounds), each with its own motion; the page around the game follows the sky:
 
 | Sky | Price | |
 | --- | ----- | - |
-| Purple Nebula | free | twinkling stars, slowly breathing nebulae |
-| Aurora | 120 | curtains of northern lights sway over the field, snow drifts down, mountains below |
-| Deep Ocean | 120 | sunbeams sway down through the water, bubbles rise, dunes on the sea floor |
-| Inferno | 120 | embers drift up from a flickering, glowing deep |
-| Spiral Galaxy | 180 | a slowly turning galaxy at a slant, with shooting stars |
+| Purple Nebula | free | stars drifting at two depths, slow clouds of coloured light, twinkles and now and then a shooting star |
+| Aurora | 120 | curtains of northern lights sway and their light flows along them, the sky's glow on the snowy ridge, stars, snow drifting down |
+| Deep Ocean | 120 | light from the waves shimmering and fading with depth, sunbeams swaying, glowing jellyfish pulsing their way up, bubbles, dunes on the sea floor |
+| Inferno | 120 | dark smoke rolling up, embers drifting from a flickering, glowing deep that flares now and then into a spray of sparks |
+| Spiral Galaxy | 180 | a slowly turning galaxy at a slant and a smaller one far away, coloured clouds, stars drifting at two depths, shooting stars |
 
 ## The daily challenge
 

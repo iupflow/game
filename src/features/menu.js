@@ -7,7 +7,7 @@ import { Meta } from '../meta.js';
 import { Ads, store } from '../ads.js';
 import { SKINS, THEMES, GEM_PACKS, skinById, themeById, applyPageTheme, uiPalette } from '../themes.js';
 import { dailyChallenge, seededRandom, todayKey } from '../daily.js';
-import { TIERS, HOLE, TEX_SCALE, PORTRAIT_R, setArtSkin, wearsSkin, dropSkinTextures, skinPreview, hasKindTextures, makeKindTextures } from '../art.js';
+import { TIERS, HOLE, TEX_SCALE, PORTRAIT_R, setArtSkin, wearsSkin, faceStyleOf, dropSkinTextures, skinPreview, hasKindTextures, makeKindTextures } from '../art.js';
 import { skyPreview } from '../backgrounds.js';
 
 const OVERLAY = 100;
@@ -111,7 +111,7 @@ export const MenuMixin = {
 
   /** A planet in the chosen skin: the kawaii skin gives it a face. */
   dress(p) {
-    if (this.skin.face && wearsSkin(p.kind)) p.addFace();
+    if (this.skin.face && wearsSkin(p.kind)) p.addFace(faceStyleOf(p.kind));
   },
 
   // ---------- the game's own controls, hidden on the home screen ----------

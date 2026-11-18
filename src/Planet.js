@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { TEX_SCALE, FACE_R, defOf, surfaceKey, lightKey, partKey, partInfo, hasKindTextures, makeKindTextures, partsOf, hasLight, wearsSkin } from './art.js';
+import { TEX_SCALE, FACE_R, defOf, surfaceKey, lightKey, partKey, partInfo, hasKindTextures, makeKindTextures, partsOf, hasLight, wearsSkin, faceKey } from './art.js';
 
 // A planet is a soft body in two senses:
 //  - physics: a hard core (CORE of the radius) wrapped in a springy skin, so planets
@@ -121,9 +121,14 @@ export class Planet {
     return o;
   }
 
-  /** A cute face that blinks now and then and looks surprised when squashed (the kawaii skin). */
-  addFace() {
-    this.face = this.addOverlay('face_happy');
+  /**
+   * A cute face (the kawaii skin): each body is its own character (style); it blinks now and then
+   * and looks startled when squashed.
+   */
+  addFace(style) {
+    this.faceStyle = style;
+    this.face = this.addOverlay(faceKey(this.scene, style, 'happy'));
+    this.face.mood = 'happy';
   }
 
   get rv() {
@@ -321,10 +326,9 @@ export class Planet {
           mood = 'blink';
           if (now > this.blinkAt + 150) this.blinkAt = now + 2000 + Math.random() * 4500;
         }
-        const key = `face_${mood}`;
-        if (this.face.key !== key) {
-          this.face.key = key;
-          this.face.img.setTexture(key);
+        if (this.face.mood !== mood) {
+          this.face.mood = mood;
+          this.face.img.setTexture(faceKey(this.scene, this.faceStyle, mood));
         }
       }
       for (const o of this.overlays) {

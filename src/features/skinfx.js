@@ -2,7 +2,7 @@
 // Every effect stays small and close to the planet it belongs to.
 // Mixed into GameScene, so `this` is the scene.
 import Phaser from 'phaser';
-import { TEX_SCALE, neonColor } from '../art.js';
+import { TEX_SCALE, neonColorOf } from '../art.js';
 
 const ADD = Phaser.BlendModes.ADD;
 const HEARTS = [0xff8fc6, 0xffc2e2, 0xffffff, 0xd9b8ff];
@@ -207,7 +207,7 @@ export const SkinFxMixin = {
 
   /** Neon: a bright ring and jagged sparks of electricity that crackle out and flicker. */
   burstBolts(x, y, rs, tier, color, light, big, boost) {
-    const neon = neonColor(color);
+    const neon = neonColorOf(tier);
     this.bloomAt(x, y, rs, neon, 0.8, 1.3 + 0.15 * big, 280 + big * 120, 0.55);
     const ring = this.add.circle(x, y, rs * 0.95).setStrokeStyle(3, neon, 1).setDepth(40).setBlendMode(ADD);
     this.tweens.add({
@@ -294,7 +294,7 @@ export const SkinFxMixin = {
           this.tweens.add({ targets: sq, alpha: 0, duration: 520, ease: 'Stepped', easeParams: [3], onComplete: () => sq.destroy() });
         }
       } else if (id === 'neon') {
-        const neon = neonColor(color);
+        const neon = neonColorOf(p.kind);
         const glow = this.add.image(x, y, 'soft').setTint(neon).setBlendMode(ADD).setAlpha(0.55).setScale((p.rv * s * 0.9) / 64 / TEX_SCALE).setDepth(19);
         this.tweens.add({ targets: glow, alpha: 0, scale: glow.scale * 0.4, duration: 300, onComplete: () => glow.destroy() });
       }

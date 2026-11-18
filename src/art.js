@@ -998,17 +998,6 @@ function pastelize(out) {
   return fromHsl(h, Math.min(0.66, s * 0.8 + 0.16), 0.7 + l * 0.2, out);
 }
 
-/** The glowing tube colour of a body's colour (neon): full saturation, bright. */
-function neonOf(color) {
-  const [r, g, b] = rgb(color);
-  const [h, s] = toHsl(r, g, b);
-  return fromHsl(h, s < 0.08 ? 0 : 1, s < 0.08 ? 0.85 : 0.62, [0, 0, 0]).map(Math.round);
-}
-/** The same, as 0xRRGGBB (for tints). */
-export function neonColor(color) {
-  const c = neonOf(color);
-  return (c[0] << 16) | (c[1] << 8) | c[2];
-}
 const css3 = (c, a) => `rgba(${c[0] | 0},${c[1] | 0},${c[2] | 0},${a})`;
 
 function eachPixel(canvas, fn) {
@@ -1035,9 +1024,9 @@ function eachPixel(canvas, fn) {
 const PX = 3.2; // world units per pixel
 
 /** Snaps colours to a small palette: a few hues, saturations and shades (never quite white). */
-function paletteSnap(px) {
+function paletteSnap(px, shades = 7) {
   const [h, s, l] = toHsl(px[0], px[1], px[2]);
-  fromHsl(Math.round(h * 24) / 24, Math.round(s * 4) / 4, Math.min(6 / 7, Math.round(l * 7) / 7), px);
+  fromHsl(Math.round(h * 24) / 24, Math.round(s * 4) / 4, Math.min((shades - 1) / shades, Math.round(l * shades) / shades), px);
 }
 
 /**
@@ -1297,43 +1286,142 @@ function candyLight() {
   };
 }
 
-// --- neon: dark glass spheres traced with glowing lines ---
+// --- neon: dark glass traced with glowing lines; each body has its own colour and its own lines,
+// drawn from what it really looks like ---
+
+const NEON = [
+  [0xd2c8ff, 'craters'], // Moon: crater rims
+  [0xffa53a, 'pits'], // Mercury: many small craters
+  [0xff5536, 'mars'], // Mars: canyons and polar caps
+  [0xffe04a, 'clouds'], // Venus: swirling clouds
+  [0x3dff8e, 'earth'], // Earth: coastlines on a blue grid
+  [0x4f6dff, 'storm'], // Neptune: bands and its dark spot
+  [0x3df5ff, 'tilt'], // Uranus: rings round its tilted axis
+  [0xffcf4a, 'bands'], // Saturn: soft bands (and its ring)
+  [0xff8840, 'jupiter'], // Jupiter: belts and the great spot
+  [0xfff27a, 'sun'], // Sun: glowing rings and granules
+  [0xff3d6a, 'cells'], // Red Giant: big boiling cells
+  [0x4fb4ff, 'burst'], // Blue Giant: a starburst
+  [0xff4ff0, 'shock'], // Supernova: shock shells
+  [0xb48cff, 'loops'], // Pulsar: magnetic loops
+];
+
+/** A body's neon colour, as 0xRRGGBB. */
+export const neonColorOf = (kind) => (wearsSkin(kind) ? NEON[kind][0] : 0x9fe8ff);
 
 function neonSurface(kind) {
   const def = TIERS[kind];
-  const col = neonOf(def.color);
+  const [color, pattern] = NEON[kind];
+  const col = rgb(color);
+  const GRID = pattern === 'earth' ? rgb(0x3a7aff) : col;
   const n = makeNoise(500 + kind);
-  const star = kind >= 9;
+  const m = makeNoise(520 + kind);
   const w = 1.5 / def.r; // line width, about 1.5 world units whatever the size
   const halo = 5 / def.r;
   const latStep = def.r < 40 ? Math.PI / 4 : Math.PI / 6;
   const lonStep = def.r < 40 ? Math.PI / 3 : Math.PI / 6;
-  const BASE = col.map((v) => v * 0.07 + 5);
+  const BASE = col.map((v) => v * 0.06 + 6);
+  const craters = pattern === 'craters' ? makeCraters(23, 14, 0.14, 0.34) : pattern === 'pits' ? makeCraters(18, 18, 0.09, 0.2) : null;
+  const spot = pattern === 'storm' ? dirOf(-0.4, 0.35) : pattern === 'jupiter' ? dirOf(-0.36, 0.55) : null;
+  const land = pattern === 'earth' ? makeNoise(51) : null; // the same continents as the painted Earth
   return (P, mu, out) => {
     const lat = Math.asin(Math.max(-1, Math.min(1, -P[1])));
     const lon = Math.atan2(P[0], P[2]);
-    let dLat = Math.abs(lat - Math.round(lat / latStep) * latStep);
-    let dLon = Math.abs(lon - Math.round(lon / lonStep) * lonStep) * Math.cos(lat);
-    if (Math.abs(lat) > 1.25) dLon = 9; // no crowding at the poles
-    let I = 0;
-    const line = (d, k) => {
-      const v = Math.exp(-(d * d) / (w * w)) + 0.32 * Math.exp(-(d * d) / (halo * halo));
-      if (v * k > I) I = v * k;
+    const r = Math.sqrt(Math.max(0, 1 - mu * mu)); // how far from the middle of the disc
+    let I = 0; // its own lines
+    let G = 0; // the faint grid
+    const line = (d, k = 1) => {
+      const v = (Math.exp(-(d * d) / (w * w)) + 0.32 * Math.exp(-(d * d) / (halo * halo))) * k;
+      if (v > I) I = v;
     };
-    line(dLat, 0.75);
-    line(dLon, 0.6);
-    // the body's own features become glowing contour lines
-    const c = fbm(n, P[0] * 1.5, P[1] * 1.5, P[2] * 1.5, 3);
-    for (const level of [-0.18, 0.05, 0.26]) line(Math.abs(c - level) * 1.6, 1);
-    if (star) {
-      const r = Math.sqrt(Math.max(0, 1 - mu * mu));
-      line(Math.abs(r - 0.42), 1);
-      line(Math.abs(r - 0.74), 0.85);
+    const grid = (d, k) => {
+      const v = (Math.exp(-(d * d) / (w * w)) + 0.2 * Math.exp(-(d * d) / (halo * halo))) * k;
+      if (v > G) G = v;
+    };
+    // a faint grid, so every body still reads as a sphere
+    const gk = craters ? 0.5 : 1; // fainter on the cratered bodies, so their craters stand out
+    grid(Math.abs(lat - Math.round(lat / latStep) * latStep), 0.32 * gk);
+    if (Math.abs(lat) < 1.25) grid(Math.abs(lon - Math.round(lon / lonStep) * lonStep) * Math.cos(lat), 0.26 * gk);
+    switch (pattern) {
+      case 'craters':
+      case 'pits':
+        for (const c of craters) {
+          const dx = P[0] - c[0];
+          const dy = P[1] - c[1];
+          const dz = P[2] - c[2];
+          line(Math.abs(Math.sqrt(dx * dx + dy * dy + dz * dz) - c[3]), 1);
+        }
+        break;
+      case 'mars':
+        line(Math.abs(fbm(n, P[0] * 1.4, P[1] * 1.4, P[2] * 1.4, 3) - 0.1) * 0.9, 1);
+        line(Math.abs(Math.abs(lat) - 1.12), 1);
+        break;
+      case 'clouds': {
+        const wx = fbm(m, P[0] * 1.4, P[1] * 1.4, P[2] * 1.4, 2);
+        for (let i = -3; i <= 3; i++) line(Math.abs(lat - i * 0.36 - 0.26 * wx), 0.85);
+        break;
+      }
+      case 'earth':
+        line(Math.abs(fbm(land, P[0] * 1.5, P[1] * 1.5, P[2] * 1.5, 4) - 0.05) * 0.8, 1);
+        break;
+      case 'storm': {
+        const wq = 0.08 * fbm(m, P[0] * 2, P[1] * 2, P[2] * 2, 2);
+        for (let i = -3; i <= 3; i++) line(Math.abs(lat - i * 0.34 - wq), 0.6);
+        line(Math.abs(ellipseDist(P, spot, 0.24, 0.13) - 1) * 0.16, 1);
+        break;
+      }
+      case 'tilt': {
+        // Uranus lies on its side: its rings of latitude stand upright
+        const side = Math.asin(Math.max(-1, Math.min(1, P[0])));
+        for (let i = -3; i <= 3; i++) line(Math.abs(side - i * 0.38), i === 0 ? 1 : 0.55);
+        break;
+      }
+      case 'bands':
+        for (let i = -4; i <= 4; i++) line(Math.abs(lat - i * 0.3), i % 2 ? 0.5 : 0.95);
+        break;
+      case 'jupiter': {
+        const wave = 0.07 * fbm(m, P[0] * 2.4, P[1] * 5, P[2] * 2.4, 3);
+        for (let i = -4; i <= 4; i++) line(Math.abs(lat - i * 0.26 - wave), 0.75);
+        const d = ellipseDist(P, spot, 0.3, 0.17);
+        line(Math.abs(d - 1) * 0.2, 1);
+        line(Math.abs(d - 0.5) * 0.2, 0.9);
+        break;
+      }
+      case 'sun':
+        line(Math.abs(r - 0.4), 1);
+        line(Math.abs(r - 0.72), 0.9);
+        line(Math.abs(fbm(n, P[0] * 4, P[1] * 4, P[2] * 4, 2)) * 0.45, 0.45);
+        break;
+      case 'cells': {
+        const c = fbm(n, P[0] * 1.2, P[1] * 1.2, P[2] * 1.2, 2);
+        line(Math.abs(c) * 0.9, 1);
+        line(Math.abs(c - 0.3) * 0.9, 0.55);
+        break;
+      }
+      case 'burst': {
+        const f = (Math.atan2(P[1], P[0]) / TAU) * 10;
+        line(Math.abs(f - Math.round(f)) * (TAU / 10) * Math.hypot(P[0], P[1]), 1);
+        line(Math.abs(r - 0.55), 0.8);
+        break;
+      }
+      case 'shock': {
+        const wob = 0.04 * fbm(n, P[0] * 3, P[1] * 3, P[2] * 3, 2);
+        for (const k of [0.28, 0.55, 0.82]) line(Math.abs(r - k - wob), 1);
+        break;
+      }
+      case 'loops':
+        line(Math.abs(n(P[0] * 2.2, P[1] * 5, P[2] * 2.2)) * 0.25, 1);
+        line(Math.abs(r - 0.5), 0.6);
+        break;
+      default:
+        break;
     }
     I = Math.min(1.25, I);
-    out[0] = BASE[0] * (0.6 + 0.4 * mu) + col[0] * I;
-    out[1] = BASE[1] * (0.6 + 0.4 * mu) + col[1] * I;
-    out[2] = BASE[2] * (0.6 + 0.4 * mu) + col[2] * I;
+    G = Math.min(1, G);
+    const base = 0.6 + 0.4 * mu;
+    out[0] = BASE[0] * base + col[0] * I + GRID[0] * G * 0.55;
+    out[1] = BASE[1] * base + col[1] * I + GRID[1] * G * 0.55;
+    out[2] = BASE[2] * base + col[2] * I + GRID[2] * G * 0.55;
     if (I > 0.85) mixTo(out, WHITE, (I - 0.85) * 1.6);
     if (out[0] > 255) out[0] = 255;
     if (out[1] > 255) out[1] = 255;
@@ -1341,11 +1429,41 @@ function neonSurface(kind) {
   };
 }
 
-// --- kawaii: milky pastels, little sparkles, a soft outline and a big toy-like shine ---
+// --- kawaii: each body its own pastel colour and its own little face; sparkles, a soft
+// outline and a big toy-like shine ---
+
+const KAWAII = [
+  [0xd9d2ff, 'sleepy'], // Moon: lilac, sleepy
+  [0xd9c4a6, 'shy'], // Mercury: latte, shy
+  [0xff9f8c, 'oh'], // Mars: coral, a little "oh"
+  [0xffdf7a, 'love'], // Venus: butter yellow, heart eyes
+  [null, 'grin'], // Earth: its own blue and green, a big smile
+  [0x9fb1ff, 'cat'], // Neptune: periwinkle, a cat's mouth
+  [0x8eeedd, 'wink'], // Uranus: aqua, a wink
+  [0xffc48a, 'joy'], // Saturn: apricot, eyes smiling shut
+  [0xffb0c8, 'tongue'], // Jupiter: strawberry milk, tongue out
+  [0xfff07a, 'star'], // Sun: lemon, sparkling eyes
+  [0xff8fa8, 'hot'], // Red Giant: rose, flustered and sweating
+  [0x9fd2ff, 'cool'], // Blue Giant: baby blue, cool half-closed eyes
+  [0xe2a8ff, 'wow'], // Supernova: lilac pink, amazed
+  [0xa6ffd8, 'dizzy'], // Pulsar: mint, dizzy from spinning
+];
+
+/** Which face a body wears in the kawaii skin. */
+export const faceStyleOf = (kind) => (wearsSkin(kind) ? KAWAII[kind][1] : 'grin');
 
 function kawaiiFinish(canvas, kind, rPx) {
+  const tone = KAWAII[kind][0];
+  const T = tone === null ? null : rgb(tone);
   eachPixel(canvas, (px, a) => {
     pastelize(px);
+    if (T) {
+      // its own colour, keeping the light and shade of its features
+      const l = (px[0] * 0.3 + px[1] * 0.59 + px[2] * 0.11) / 255 / 0.84;
+      px[0] = Math.min(255, px[0] * 0.4 + T[0] * 0.6 * l);
+      px[1] = Math.min(255, px[1] * 0.4 + T[1] * 0.6 * l);
+      px[2] = Math.min(255, px[2] * 0.4 + T[2] * 0.6 * l);
+    }
     return a;
   });
   const ctx = canvas.getContext('2d');
@@ -1363,8 +1481,9 @@ function kawaiiFinish(canvas, kind, rPx) {
   return canvas;
 }
 
-function kawaiiLight(def) {
-  const tone = pastelize(rgb(def.color));
+function kawaiiLight(def, kind) {
+  const base = KAWAII[kind][0];
+  const tone = base === null ? pastelize(rgb(def.color)) : rgb(base);
   const LINE = rgb(shade((Math.round(tone[0]) << 16) | (Math.round(tone[1]) << 8) | Math.round(tone[2]), 0.7));
   return (x, y, z, out) => {
     const r = Math.hypot(x, y);
@@ -1444,7 +1563,7 @@ function candyRing(ctx, R, front, { turn, tilt, r0, r1, colors, stripes }) {
 
 function neonRing(ctx, R, front, def, { turn, tilt, radii }) {
   ctx.rotate(rad(turn));
-  const col = neonOf(def.color);
+  const col = rgb(neonColorOf(TIERS.indexOf(def)));
   const from = front ? 0 : Math.PI;
   for (const r of radii) {
     for (const [width, alpha] of [[0.09, 0.18], [0.045, 0.4], [0.018, 1]]) {
@@ -1480,7 +1599,7 @@ Object.assign(PARTS, {
     size: 1.6,
     blend: 'add',
     draw(ctx, R, front, def) {
-      const c = neonOf(def.color);
+      const c = rgb(neonColorOf(TIERS.indexOf(def)));
       glow(ctx, R, 1.6, [[0, css3(c, 0.55)], [0.42, css3(c, 0.2)], [1, css3(c, 0)]]);
     },
   },
@@ -1580,7 +1699,7 @@ function renderSurface(kind, skin, scale) {
     const rCells = (def.r * cells) / ((def.r + PAD) * 2);
     const small = renderGrid(cells, rCells, SURFACES[def.surface](), frame);
     eachPixel(small, (px, a) => {
-      paletteSnap(px);
+      paletteSnap(px, kind >= 9 ? 11 : 7);
       return a;
     });
     return upscale(small, size);
@@ -1603,12 +1722,9 @@ function renderLight(kind, skin, scale) {
   }
   const rPx = (def.r * size) / ((def.r + PAD) * 2);
   let fn;
-  if (s === 'kawaii') fn = kawaiiLight(def);
+  if (s === 'kawaii') fn = kawaiiLight(def, kind);
   else if (s === 'candy') fn = candyLight();
-  else if (s === 'neon') {
-    const c = neonOf(def.color);
-    fn = glossFor({ rim: (c[0] << 16) | (c[1] << 8) | c[2], rimK: 1.1, sheen: 0, gloss: 0.32 });
-  }
+  else if (s === 'neon') fn = glossFor({ rim: neonColorOf(kind), rimK: 1.1, sheen: 0, gloss: 0.32 });
   else fn = glossFor(def.light);
   return renderSphere(size, rPx, fn, null);
 }
@@ -1691,7 +1807,7 @@ export function drawPortrait(ctx, kind, R, skin, fresh = false) {
   if (hasLight(kind, s)) ctx.drawImage(fresh ? renderLight(kind, s, Math.min(scale, 96 / R)) : lightCanvas(kind, s), -span / 2, -span / 2, span, span);
   ctx.restore();
   layer(true);
-  if (s === 'kawaii') drawFace(ctx, R * 1.04, 'happy');
+  if (s === 'kawaii') drawFace(ctx, R * 1.04, 'happy', faceStyleOf(kind));
 }
 
 function canvasTex(scene, key, w, h, draw) {
@@ -1859,10 +1975,6 @@ export function makeCommonTextures(scene) {
     }
   });
 
-  // cute faces for the face skin, at radius FACE_R: happy, blinking, surprised
-  for (const mood of ['happy', 'blink', 'wow']) {
-    canvasTex(scene, `face_${mood}`, FACE_R * 2, FACE_R * 2, (ctx) => drawFace(ctx, FACE_R, mood));
-  }
 
   // the diamond, the currency of the game
   canvasTex(scene, 'gem', 48, 48, (ctx) => drawGem(ctx, 17));
@@ -1962,52 +2074,221 @@ function star4(ctx, x, y, r, color) {
   ctx.fill();
 }
 
-function drawFace(ctx, R, mood) {
-  // rosy cheeks
+const INK = '#2b1d3a';
+
+/** The face texture for a style and a mood ('happy', 'blink' or 'wow'), made the first time it is needed. */
+export function faceKey(scene, style, mood) {
+  const key = `face_${style}_${mood}`;
+  canvasTex(scene, key, FACE_R * 2, FACE_R * 2, (ctx) => drawFace(ctx, FACE_R, mood, style));
+  return key;
+}
+
+function heart(ctx, x, y, s, color) {
+  ctx.beginPath();
+  ctx.moveTo(x, y + s * 0.75);
+  ctx.bezierCurveTo(x - s * 1.25, y - s * 0.05, x - s * 0.8, y - s * 1.05, x, y - s * 0.35);
+  ctx.bezierCurveTo(x + s * 0.8, y - s * 1.05, x + s * 1.25, y - s * 0.05, x, y + s * 0.75);
+  ctx.fillStyle = color;
+  ctx.fill();
+}
+
+/**
+ * A little face at radius R. style: which character it is (see KAWAII); mood: 'happy' (its own
+ * look), 'blink' (eyes shut for a moment) or 'wow' (startled by a hard squash, the same for all).
+ */
+function drawFace(ctx, R, mood, style = 'grin') {
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  const hot = style === 'hot' && mood !== 'wow';
+  // rosy cheeks (a flustered one blushes harder)
   for (const s of [-1, 1]) {
-    const g = ctx.createRadialGradient(s * R * 0.52, R * 0.2, 0, s * R * 0.52, R * 0.2, R * 0.2);
-    g.addColorStop(0, 'rgba(255,120,150,.55)');
+    const cx = s * R * 0.52;
+    const cy = R * 0.2;
+    const rr = R * (hot ? 0.25 : 0.2);
+    const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, rr);
+    g.addColorStop(0, hot ? 'rgba(255,80,110,.7)' : 'rgba(255,120,150,.55)');
     g.addColorStop(1, 'rgba(255,120,150,0)');
     ctx.fillStyle = g;
     ctx.beginPath();
-    ctx.ellipse(s * R * 0.52, R * 0.2, R * 0.2, R * 0.13, 0, 0, TAU);
+    ctx.ellipse(cx, cy, rr, rr * 0.65, 0, 0, TAU);
     ctx.fill();
   }
-  // eyes
-  for (const s of [-1, 1]) {
-    const ex = s * R * 0.3;
-    const ey = -R * 0.06;
-    if (mood === 'blink') {
-      ctx.strokeStyle = '#2b1d3a';
-      ctx.lineWidth = R * 0.07;
-      ctx.lineCap = 'round';
-      ctx.beginPath();
-      ctx.arc(ex, ey - R * 0.02, R * 0.1, 0.15 * Math.PI, 0.85 * Math.PI);
-      ctx.stroke();
-      continue;
-    }
-    const big = mood === 'wow' ? 1.25 : 1;
-    ctx.fillStyle = '#2b1d3a';
+  const ex = R * 0.3;
+  const ey = -R * 0.06;
+  const stroke = (wd) => {
+    ctx.strokeStyle = INK;
+    ctx.lineWidth = R * wd;
+  };
+  const shut = (x, smiling) => {
+    // a shut eye: relaxed (a little cup) or smiling (an arch)
+    stroke(0.07);
     ctx.beginPath();
-    ctx.ellipse(ex, ey, R * 0.1 * big, R * 0.13 * big, 0, 0, TAU);
+    if (smiling) ctx.arc(x, ey + R * 0.05, R * 0.1, 1.15 * Math.PI, 1.85 * Math.PI);
+    else ctx.arc(x, ey - R * 0.02, R * 0.1, 0.15 * Math.PI, 0.85 * Math.PI);
+    ctx.stroke();
+  };
+  const round = (x, k = 1) => {
+    ctx.fillStyle = INK;
+    ctx.beginPath();
+    ctx.ellipse(x, ey, R * 0.1 * k, R * 0.13 * k, 0, 0, TAU);
     ctx.fill();
     ctx.fillStyle = '#ffffff';
     ctx.beginPath();
-    ctx.arc(ex - R * 0.035, ey - R * 0.05, R * 0.04 * big, 0, TAU);
+    ctx.arc(x - R * 0.035 * k, ey - R * 0.05 * k, R * 0.04 * k, 0, TAU);
     ctx.fill();
+  };
+  let eyes = style;
+  if (mood === 'wow') eyes = 'wow';
+  else if (mood === 'blink' && style !== 'joy' && style !== 'sleepy') eyes = 'blink';
+  for (const s of [-1, 1]) {
+    const x = s * ex;
+    switch (eyes) {
+      case 'blink':
+      case 'sleepy':
+        shut(x, false);
+        break;
+      case 'joy':
+        shut(x, true);
+        break;
+      case 'shy':
+        ctx.fillStyle = INK;
+        ctx.beginPath();
+        ctx.arc(x, ey + R * 0.02, R * 0.065, 0, TAU);
+        ctx.fill();
+        // little blush lines
+        ctx.strokeStyle = 'rgba(230,80,110,.75)';
+        ctx.lineWidth = R * 0.035;
+        for (let i = -1; i <= 1; i++) {
+          ctx.beginPath();
+          ctx.moveTo(s * R * 0.52 + i * R * 0.07, R * 0.15);
+          ctx.lineTo(s * R * 0.52 + i * R * 0.07 - R * 0.04, R * 0.24);
+          ctx.stroke();
+        }
+        break;
+      case 'love':
+        heart(ctx, x, ey, R * 0.13, '#ff4f7f');
+        ctx.fillStyle = 'rgba(255,255,255,.85)';
+        ctx.beginPath();
+        ctx.arc(x - R * 0.05, ey - R * 0.05, R * 0.03, 0, TAU);
+        ctx.fill();
+        break;
+      case 'star':
+        round(x, 1.12);
+        star4(ctx, x, ey, R * 0.12, '#ffffff');
+        break;
+      case 'wink':
+        if (s < 0) round(x);
+        else shut(x, true);
+        break;
+      case 'cool': {
+        // half-closed: the top of the eye hidden under a straight lid
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(x - R * 0.2, ey - R * 0.01, R * 0.4, R * 0.3);
+        ctx.clip();
+        round(x);
+        ctx.restore();
+        stroke(0.06);
+        ctx.beginPath();
+        ctx.moveTo(x - R * 0.13, ey - R * 0.01 + s * R * 0.015);
+        ctx.lineTo(x + R * 0.13, ey - R * 0.01 - s * R * 0.015);
+        ctx.stroke();
+        break;
+      }
+      case 'dizzy': {
+        stroke(0.045);
+        ctx.beginPath();
+        for (let t = 0; t <= Math.PI * 4; t += 0.2) {
+          const rr = R * 0.015 + (t / (Math.PI * 4)) * R * 0.11;
+          const a = t * s;
+          ctx.lineTo(x + Math.cos(a) * rr, ey + Math.sin(a) * rr);
+        }
+        ctx.stroke();
+        break;
+      }
+      case 'wow':
+        round(x, 1.3);
+        break;
+      default:
+        round(x);
+    }
   }
-  // mouth
-  ctx.strokeStyle = '#2b1d3a';
-  ctx.fillStyle = '#2b1d3a';
-  ctx.lineWidth = R * 0.06;
-  ctx.lineCap = 'round';
-  if (mood === 'wow') {
+  // the mouth
+  let mouth = { sleepy: 'small', shy: 'small', oh: 'o', love: 'smile', grin: 'grin', cat: 'cat', wink: 'smile', joy: 'smile', tongue: 'tongue', star: 'grin', hot: 'wavy', cool: 'smirk', wow: 'O', dizzy: 'wavy' }[style] || 'smile';
+  if (mood === 'wow') mouth = 'O';
+  ctx.fillStyle = INK;
+  stroke(0.06);
+  ctx.beginPath();
+  switch (mouth) {
+    case 'small':
+      ctx.arc(0, R * 0.16, R * 0.08, 0.2 * Math.PI, 0.8 * Math.PI);
+      ctx.stroke();
+      break;
+    case 'o':
+      ctx.ellipse(0, R * 0.24, R * 0.055, R * 0.065, 0, 0, TAU);
+      ctx.fill();
+      break;
+    case 'O':
+      ctx.ellipse(0, R * 0.25, R * 0.08, R * 0.1, 0, 0, TAU);
+      ctx.fill();
+      break;
+    case 'grin':
+    case 'tongue':
+      ctx.moveTo(-R * 0.15, R * 0.14);
+      ctx.arc(0, R * 0.14, R * 0.15, 0, Math.PI, false);
+      ctx.closePath();
+      ctx.fill();
+      ctx.save();
+      ctx.clip();
+      ctx.fillStyle = '#ff7a9a';
+      ctx.beginPath();
+      ctx.ellipse(0, R * 0.27, R * 0.08, R * 0.06, 0, 0, TAU);
+      ctx.fill();
+      ctx.restore();
+      if (mouth === 'tongue') {
+        ctx.fillStyle = '#ff6f91';
+        ctx.beginPath();
+        ctx.ellipse(R * 0.04, R * 0.31, R * 0.065, R * 0.08, 0.2, 0, TAU);
+        ctx.fill();
+        stroke(0.025);
+        ctx.beginPath();
+        ctx.moveTo(R * 0.045, R * 0.27);
+        ctx.lineTo(R * 0.055, R * 0.34);
+        ctx.stroke();
+      }
+      break;
+    case 'cat':
+      ctx.arc(-R * 0.06, R * 0.15, R * 0.06, 0.05 * Math.PI, 0.95 * Math.PI);
+      ctx.moveTo(R * 0.12, R * 0.15);
+      ctx.arc(R * 0.06, R * 0.15, R * 0.06, 0.05 * Math.PI, 0.95 * Math.PI);
+      ctx.stroke();
+      break;
+    case 'wavy':
+      ctx.moveTo(-R * 0.13, R * 0.21);
+      ctx.quadraticCurveTo(-R * 0.065, R * 0.14, 0, R * 0.21);
+      ctx.quadraticCurveTo(R * 0.065, R * 0.28, R * 0.13, R * 0.21);
+      ctx.stroke();
+      break;
+    case 'smirk':
+      ctx.moveTo(-R * 0.1, R * 0.2);
+      ctx.quadraticCurveTo(R * 0.03, R * 0.25, R * 0.13, R * 0.13);
+      ctx.stroke();
+      break;
+    default:
+      ctx.arc(0, R * 0.14, R * 0.13, 0.2 * Math.PI, 0.8 * Math.PI);
+      ctx.stroke();
+  }
+  if (hot) {
+    // a drop of sweat
+    ctx.fillStyle = '#a8dcff';
     ctx.beginPath();
-    ctx.ellipse(0, R * 0.25, R * 0.08, R * 0.1, 0, 0, TAU);
+    ctx.moveTo(R * 0.6, -R * 0.52);
+    ctx.quadraticCurveTo(R * 0.7, -R * 0.36, R * 0.6, -R * 0.3);
+    ctx.quadraticCurveTo(R * 0.5, -R * 0.36, R * 0.6, -R * 0.52);
     ctx.fill();
-  } else {
+    ctx.fillStyle = 'rgba(255,255,255,.8)';
     ctx.beginPath();
-    ctx.arc(0, R * 0.14, R * 0.13, 0.2 * Math.PI, 0.8 * Math.PI);
-    ctx.stroke();
+    ctx.arc(R * 0.58, -R * 0.36, R * 0.02, 0, TAU);
+    ctx.fill();
   }
 }
