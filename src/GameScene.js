@@ -15,13 +15,16 @@ import {
   portraitKey,
   shade,
 } from './art.js';
+import { Meta } from './meta.js';
+import { buildSky } from './backgrounds.js';
 import { Planet, CORE, DRAG } from './Planet.js';
 import { PlanetBatch } from './PlanetBatch.js';
 import { nativeReady } from './native.js';
-import { SpecialsMixin, GOLDEN_POINTS, GOLDEN_COINS } from './features/specials.js';
+import { SpecialsMixin } from './features/specials.js';
 import { AbilitiesMixin, ABILITIES } from './features/abilities.js';
 import { EventsMixin } from './features/events.js';
-import { MenuMixin } from './features/menu.js';
+import { MenuMixin, BLACK_HOLE_GEMS } from './features/menu.js';
+import { SkinFxMixin } from './features/skinfx.js';
 
 export const W = 720;
 export const H = 1280;
@@ -128,6 +131,7 @@ const RING = (() => {
 })();
 const FIRST_KINDS = [0, 1, 2, 'comet', 'wrecker']; // what the first screen shows; the rest is textured in the background
 const HINT_Y = 1032;
+const COMBO_WORDS = ['', '', 'NICE!', 'GREAT!', 'AMAZING!', 'STELLAR!'];
 
 function mix(c1, c2, t) {
   const ch = (c, s) => (c >> s) & 255;
@@ -160,7 +164,10 @@ export class GameScene extends Phaser.Scene {
     super('game');
   }
 
-  /** data.play: start a game straight away (in data.mode, 'normal' or 'daily'); otherwise the home screen. */
+  /**
+   * data.play: start a game straight away (in data.mode, 'normal' or 'daily'); otherwise the home
+   * screen, with data.shop: the shop open on that tab (after a skin or background is put on).
+   */
   create(data = {}) {
     this.CX = CX;
     this.CY = CY;
@@ -170,15 +177,15 @@ export class GameScene extends Phaser.Scene {
     makeCommonTextures(this);
     for (const kind of FIRST_KINDS) makeKindTextures(this, kind);
 
-    // special planets, planet powers, cosmic events, stardust, the daily challenge
+    // special planets, planet powers, cosmic events, diamonds, the daily challenge
     this.storms = [];
     this.sweeps = [];
-    this.runCoins = 0; // stardust picked up in this game
-    this.runCoinsBanked = 0;
-    this.coinsBanked = 0; // stardust from this game already in the wallet (a revive can end a game twice)
+    this.runGems = 0; // diamonds found in this game
+    this.newRecord = false; // this game made a bigger body than any game before
+    this.inGame = false; // a game is being played (and is saved as it goes)
+    this.restoring = false;
     this.playMs = 0;
     this.event = null;
-    this.goldComet = null;
     this.zeroG = null;
     this.rng = Math.random; // the launcher's dice; seeded in the daily challenge
     this.rule = null; // the daily challenge's twist
@@ -188,7 +195,6 @@ export class GameScene extends Phaser.Scene {
     this.spinMul = 1;
     this.ringScale = 1;
     this.lastWasSpecial = false;
-    this.nextGolden = false;
     this.gameUi = []; // controls hidden on the home screen
     this.homeItems = null;
     this.applyLooks();
@@ -240,8 +246,6 @@ export class GameScene extends Phaser.Scene {
     this.gravY = CY;
     this.maxTier = -1;
 
-    this.score = 0;
-    this.best = store.get('jd2_best', 0);
     this.universe = 1;
     this.combo = 0;
     this.lastMergeAt = 0;
@@ -289,7 +293,10 @@ export class GameScene extends Phaser.Scene {
     this.dangerLabel = this.text(0, 0, '', 34, '#ffffff').setOrigin(0.5).setDepth(38).setStroke('#7a0f2a', 7).setVisible(false);
 
     if (data.play) this.startGame(data.mode || 'normal');
-    else this.showHome();
+    else {
+      this.showHome();
+      if (data.shop) this.openShop(data.shop);
+    }
 
     // the bigger bodies are textured one per frame after start-up, so the game appears at once
     this.textureQueue = ALL_KINDS.filter((k) => !hasKindTextures(this, k));
@@ -308,7 +315,6 @@ export class GameScene extends Phaser.Scene {
     // Tap: the planet is let go from the orbit at the angle you tapped, and gravity pulls it in.
     // Pull: press anywhere and drag; the drag's direction picks the side, its length the power.
     this.input.on('pointerdown', (p, over) => {
-      if ((this.state === 'aim' || this.state === 'flying') && this.tryCatchComet(p)) return;
       if (this.targeting) {
         if (!over.length) this.pickTarget(p);
         return;
@@ -342,12 +348,18 @@ export class GameScene extends Phaser.Scene {
     this.input.on('pointerup', release);
     this.input.on('pointerupoutside', release);
 
-    // leaving the app (or the browser tab) pauses the game
+    // leaving the app (or the browser tab) keeps the game and pauses it
     const onHidden = () => {
+      this.saveGame();
       if (this.state === 'aim' || this.state === 'flying') this.openPause();
     };
+    const onPageHide = () => this.saveGame();
     this.game.events.on('hidden', onHidden);
-    this.events.once('shutdown', () => this.game.events.off('hidden', onHidden));
+    window.addEventListener('pagehide', onPageHide);
+    this.events.once('shutdown', () => {
+      this.game.events.off('hidden', onHidden);
+      window.removeEventListener('pagehide', onPageHide);
+    });
     nativeReady();
   }
 
@@ -361,6 +373,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   portrait(x, y, kind, radius) {
+    if (!hasKindTextures(this, kind)) makeKindTextures(this, kind);
     return this.add.image(x, y, portraitKey(kind)).setScale(radius / PORTRAIT_R / TEX_SCALE);
   }
 
@@ -453,30 +466,10 @@ export class GameScene extends Phaser.Scene {
 
   // ---------- setup ----------
 
-  /** The sky in the chosen theme. Drawn again when the theme changes. */
+  /** The sky in the chosen theme, with its own motion (backgrounds.js). */
   drawBackground() {
-    if (this.bgLayer) {
-      this.tweens.killTweensOf(this.bgLayer.list);
-      this.bgLayer.destroy(true);
-    }
-    const t = this.theme;
-    this.bgLayer = this.add.container(0, 0).setDepth(-10);
-    const g = this.add.graphics();
-    g.fillGradientStyle(t.top, t.top, t.bottom, t.bottom, 1);
-    g.fillRect(-W, -H, W * 3, H * 3);
-    this.bgLayer.add(g);
-    [[150, 380, 5.2], [600, 900, 6], [520, 300, 3.6]].forEach(([x, y, s], i) => {
-      this.bgLayer.add(this.add.image(x, y, 'soft').setScale(s / TEX_SCALE).setTint(t.glows[i]).setAlpha(0.22).setBlendMode(Phaser.BlendModes.ADD));
-    });
-    for (let i = 0; i < 110; i++) {
-      g.fillStyle(0xffffff, 0.25 + Math.random() * 0.6);
-      g.fillCircle(Math.random() * W, Math.random() * H, 0.6 + Math.random() * 1.5);
-    }
-    for (let i = 0; i < 9; i++) {
-      const s = this.add.image(Math.random() * W, 200 + Math.random() * 900, 'spark').setScale(0.35 / TEX_SCALE).setAlpha(0.2);
-      this.bgLayer.add(s);
-      this.tweens.add({ targets: s, alpha: 0.9, duration: 900 + Math.random() * 1500, yoyo: true, repeat: -1, delay: Math.random() * 2000 });
-    }
+    if (this.bgLayer) this.bgLayer.destroy(true);
+    this.bgLayer = buildSky(this, this.theme, W, H);
   }
 
   /** The smallest body the launcher gives at the moment. */
@@ -629,11 +622,10 @@ export class GameScene extends Phaser.Scene {
 
   buildHud() {
     const ui = this.gameUi;
-    ui.push(this.text(40, 36, 'SCORE', 20, '#b9a8e6'));
-    this.scoreText = this.text(40, 56, '0', 58);
-    this.bestText = this.text(40, 122, 'BEST ' + this.best, 20, '#b9a8e6');
-    this.universeText = this.text(40, 190, '', 20, '#ffd93d');
-    ui.push(this.scoreText, this.bestText, this.universeText);
+    // diamonds at the top left (always shown, on the home screen too); the universe under them
+    this.buildGems();
+    this.universeText = this.text(28, 104, '', 20, '#7fe3ff');
+    ui.push(this.universeText);
 
     // next planet; tap to swap
     ui.push(this.text(W - 40, 36, 'NEXT', 20, '#b9a8e6').setOrigin(1, 0));
@@ -656,8 +648,15 @@ export class GameScene extends Phaser.Scene {
     this.tappable(pause, () => this.openPause(), 0.9);
     ui.push(pause);
 
-    this.comboText = this.text(W / 2, 232, '', 40, '#ffd93d').setOrigin(0.5).setAlpha(0).setDepth(FX + 2);
-    this.buildCoins();
+    this.comboText = this.text(W / 2, 232, '', 40, '#ffd93d').setOrigin(0.5).setAlpha(0).setDepth(FX + 2).setStroke('#3a2490', 8);
+    // the daily goal and the current event: under the pause button
+    this.goalText = this.text(W / 2, 112, '', 18, '#ffcf8a').setOrigin(0.5).setDepth(UI + 1).setVisible(false);
+    this.eventLabel = this.text(W / 2, 138, '', 18, '#ffffff').setOrigin(0.5).setDepth(UI + 1).setVisible(false);
+  }
+
+  /** "UNIVERSE 2" under the diamonds, once the first black hole has started a new one. */
+  refreshUniverse() {
+    this.universeText.setText(this.universe > 1 ? `UNIVERSE ${this.universe}` : '');
   }
 
   boosterButton(x, y, iconKey, iconScale, label, onTap) {
@@ -785,28 +784,24 @@ export class GameScene extends Phaser.Scene {
     return lo;
   }
 
-  setHeld(kind, golden = false) {
+  setHeld(kind) {
     if (this.held) this.held.destroy();
     this.held = new Planet(this, kind, CX, CY);
     this.dress(this.held);
-    if (golden) this.held.makeGolden();
     this.updateHeld();
   }
 
   prepareHeld() {
-    this.setHeld(this.nextKind, this.nextGolden);
-    const next = this.rollNext();
-    this.nextKind = next.kind;
-    this.nextGolden = next.golden;
+    this.setHeld(this.nextKind);
+    this.nextKind = this.rollNext();
     this.refreshNext();
-    this.tipSpecial(this.nextKind, this.nextGolden);
+    this.tipSpecial(this.nextKind);
     this.state = 'aim';
   }
 
   refreshNext() {
+    if (!hasKindTextures(this, this.nextKind)) makeKindTextures(this, this.nextKind);
     this.nextIcon.setTexture(portraitKey(this.nextKind));
-    if (this.nextGolden) this.nextIcon.setTint(0xffdf7a);
-    else this.nextIcon.clearTint();
     this.tweens.add({ targets: this.nextIcon, scale: { from: 0.2 / TEX_SCALE, to: 28 / PORTRAIT_R / TEX_SCALE }, duration: 180, ease: 'Back.out' });
   }
 
@@ -815,10 +810,8 @@ export class GameScene extends Phaser.Scene {
     Sfx.swap();
     Haptics.light();
     const current = this.held.kind;
-    const golden = !!this.held.golden;
-    this.setHeld(this.nextKind, this.nextGolden);
+    this.setHeld(this.nextKind);
     this.nextKind = current;
-    this.nextGolden = golden;
     this.refreshNext();
   }
 
@@ -1173,11 +1166,10 @@ export class GameScene extends Phaser.Scene {
   upgradePlanet(target) {
     const { x, y, tier } = target;
     this.removePiece(target);
-    const { shown, points } = this.evolve(x, y, tier);
-    const total = points * 2 * this.universe;
-    this.addScore(total);
-    this.mergeFx(x, y, shown, total);
+    const { shown } = this.evolve(x, y, tier);
+    this.mergeFx(x, y, shown);
     this.shockwave(x, y, TIERS[shown].r + 70, 2.2);
+    if (shown < HOLE) this.rollGem(shown, x, y);
     Sfx.cometHit();
     Haptics.heavy();
   }
@@ -1310,7 +1302,6 @@ export class GameScene extends Phaser.Scene {
     const at = this.toScreen(x, y);
     const t = TIERS[tier];
     const rs = t.r * this.fieldScale;
-    this.addScore((tier + 1) * 4 * this.universe);
     const n = 22 + tier * 3;
     for (let i = 0; i < n; i++) {
       const a = Math.random() * Math.PI * 2;
@@ -1532,7 +1523,6 @@ export class GameScene extends Phaser.Scene {
     p.sinkTo = v;
     this.dying.push(p);
     v.swallowed++;
-    this.addScore((p.tier + 1) * 5 * this.universe);
     Sfx.swallow(v.swallowed);
     Haptics.light();
   }
@@ -1949,6 +1939,10 @@ export class GameScene extends Phaser.Scene {
 
   discover(tier) {
     if (tier > this.biggest) this.biggest = tier;
+    if (tier < HOLE && tier > Meta.record) {
+      Meta.noteRecord(tier);
+      this.newRecord = true;
+    }
     if (!this.cometUnlocked && tier >= COMET_UNLOCK_TIER && tier < HOLE) this.unlockComet();
     if (tier < HOLE && tier > this.universeMax) this.universeMax = tier;
     if (this.seen.includes(tier)) return false;
@@ -1975,6 +1969,8 @@ export class GameScene extends Phaser.Scene {
     b.pop = 0.5;
     b.pv = 0.16;
     this.pieces.push(b);
+    // a saved game being put back (nothing here is new), or a special body: nothing more to do
+    if (this.restoring || typeof tier !== 'number') return b;
     if (tier > this.runMax) {
       const before = this.ringTarget();
       this.runMax = tier;
@@ -2003,14 +1999,13 @@ export class GameScene extends Phaser.Scene {
   /** Merge result: the next body in the chain, or the black hole at the very end. */
   evolve(x, y, tier) {
     const next = tier + 1;
-    const base = ((next + 1) * (next + 2)) / 2;
     if (next >= HOLE) {
       this.startCrunch(x, y);
-      return { shown: MAX_PLANET, points: base * 5 };
+      return { shown: MAX_PLANET, hole: true };
     }
     const p = this.spawnPiece(x, y, next);
     this.triggerAbility(p);
-    return { shown: next, points: base };
+    return { shown: next, hole: false };
   }
 
   processQueues() {
@@ -2022,36 +2017,17 @@ export class GameScene extends Phaser.Scene {
       const y = (a.y + b.y) / 2;
       const tier = a.tier;
       const pair = [a, b].map((p) => ({ x: p.x, y: p.y, rv: p.rv, kind: p.kind }));
-      const golden = a.golden || b.golden;
       this.removePiece(a);
       this.removePiece(b);
       this.combo = now - this.lastMergeAt < 1300 ? this.combo + 1 : 1;
       this.lastMergeAt = now;
-      const { shown, points } = this.evolve(x, y, tier);
-      let total = points * this.combo * this.universe;
-      if (this.rushOn()) total *= 2; // Star Rush
-      if (golden) {
-        // a golden planet pays triple, and some stardust
-        total *= GOLDEN_POINTS;
-        this.gainCoins(GOLDEN_COINS, x, y);
-      }
-      this.addScore(total);
-      this.mergeFx(x, y, shown, total, pair);
+      const { shown, hole } = this.evolve(x, y, tier);
+      this.mergeFx(x, y, shown, pair);
       this.shockwave(x, y, TIERS[shown].r + 70, 1.8 + shown * 0.2);
+      if (!hole) this.rollGem(shown, x, y); // now and then a diamond drops
       Sfx.merge(tier, this.combo);
       Haptics.merge(tier + 1);
       if (tier >= 2) this.slowUntil = now + 60 + tier * 7;
-    }
-  }
-
-  addScore(points) {
-    this.score += Math.round(points);
-    this.scoreText.setText(String(this.score));
-    this.tweens.add({ targets: this.scoreText, scale: { from: 1.18, to: 1 }, duration: 160 });
-    if (this.score > this.best) {
-      this.best = this.score;
-      store.set('jd2_best', this.best);
-      this.bestText.setText('BEST ' + this.best);
     }
   }
 
@@ -2089,7 +2065,6 @@ export class GameScene extends Phaser.Scene {
     p.sinkTo = this.hole;
     this.dying.push(p);
     this.swallowed++;
-    this.addScore((Math.max(0, p.tier) + 1) * 6 * this.universe);
     this.hole.pv += 0.07;
     this.hole.impulse(Math.random() * Math.PI, 0.12);
     Sfx.swallow(this.swallowed);
@@ -2135,11 +2110,11 @@ export class GameScene extends Phaser.Scene {
     this.refreshNext();
     this.tweens.add({ targets: this.coreParts, alpha: 1, duration: 600 });
     this.universe++;
-    this.addScore(1000 * (this.universe - 1));
-    this.universeText.setText(`UNIVERSE ${this.universe}  ·  SCORE ×${this.universe}`);
+    this.refreshUniverse();
     const flash = this.add.image(at.x, at.y, 'soft').setScale(1 / TEX_SCALE).setDepth(FX).setBlendMode(Phaser.BlendModes.ADD);
     this.tweens.add({ targets: flash, scale: 16 / TEX_SCALE, alpha: 0, duration: 700, ease: 'Cubic.out', onComplete: () => flash.destroy() });
-    this.banner(`UNIVERSE ${this.universe}`, `All scores ×${this.universe}`, '#7fe3ff');
+    this.banner(`UNIVERSE ${this.universe}`, 'A new universe begins', '#7fe3ff');
+    this.gainGemsAt(BLACK_HOLE_GEMS, at.x, at.y); // a black hole always leaves diamonds behind
     this.cameras.main.flash(300, 255, 255, 255);
     Sfx.universe();
     Haptics.success();
@@ -2158,7 +2133,7 @@ export class GameScene extends Phaser.Scene {
    * All of it grows with the size of the new body and with the combo.
    * pair: where the two merging planets were, if this was a merge of two.
    */
-  mergeFx(wx, wy, tier, points, pair = null) {
+  mergeFx(wx, wy, tier, pair = null) {
     const { x, y } = this.toScreen(wx, wy);
     const t = TIERS[tier];
     const s = this.fieldScale;
@@ -2167,7 +2142,6 @@ export class GameScene extends Phaser.Scene {
     const light = mix(color, 0xffffff, 0.55);
     const big = Math.min(1, tier / 12); // 0 for the Moon, 1 from the Supernova on
     const boost = Math.min(3, Math.max(0, (this.combo || 1) - 1));
-    const ADD = Phaser.BlendModes.ADD;
 
     if (pair) {
       for (const p of pair) {
@@ -2176,82 +2150,12 @@ export class GameScene extends Phaser.Scene {
         this.tweens.add({ targets: ghost, x, y, scale: ghost.scale * 0.55, alpha: 0, duration: 150, ease: 'Quad.in', onComplete: () => ghost.destroy() });
       }
     }
+    this.skinBurst(x, y, rs, tier, color, light, big, boost);
 
-    // a soft glow that stays close to the new body
-    const bloom = this.add.image(x, y, 'soft').setTint(light).setBlendMode(ADD).setDepth(FX).setAlpha(0.7).setScale((rs * 0.7) / 64 / TEX_SCALE);
-    this.tweens.add({
-      targets: bloom,
-      props: { scale: { value: (rs * (1.35 + 0.2 * big)) / 64 / TEX_SCALE, ease: 'Cubic.out' }, alpha: { value: 0, ease: 'Quad.in' } },
-      duration: 320 + big * 160,
-      onComplete: () => bloom.destroy(),
-    });
-
-    // one fine ring hugging the new body
-    const ring = this.add.circle(x, y, rs * 0.95).setStrokeStyle(2.5, light, 0.9).setDepth(FX).setBlendMode(ADD);
-    this.tweens.add({
-      targets: ring,
-      props: { radius: { value: rs * (1.3 + 0.15 * big), ease: 'Cubic.out' }, alpha: { value: 0, ease: 'Quad.in' } },
-      duration: 360 + big * 160,
-      onComplete: () => ring.destroy(),
-    });
-
-    // a few small sparks, just past the edge
-    const n = Math.min(18, 6 + tier + boost * 2);
-    for (let i = 0; i < n; i++) {
-      const ang = (i / n) * Math.PI * 2 + Math.random() * 0.5;
-      const star = i % 4 === 0;
-      const d = this.add
-        .image(x + Math.cos(ang) * rs * 0.85, y + Math.sin(ang) * rs * 0.85, star ? 'spark' : 'dot')
-        .setTint(i % 2 ? color : light)
-        .setScale(((star ? 0.42 : 0.3) + Math.random() * 0.15) / TEX_SCALE)
-        .setDepth(FX)
-        .setBlendMode(ADD);
-      const dist = rs + 8 + Math.random() * (14 + big * 10);
-      this.tweens.add({
-        targets: d,
-        props: {
-          x: { value: x + Math.cos(ang) * dist, ease: 'Cubic.out' },
-          y: { value: y + Math.sin(ang) * dist, ease: 'Cubic.out' },
-          alpha: { value: 0, ease: 'Quad.in' },
-          scale: { value: 0.08 / TEX_SCALE, ease: 'Quad.in' },
-          angle: { value: 120, ease: 'Linear' },
-        },
-        duration: 380 + Math.random() * 180 + big * 120,
-        onComplete: () => d.destroy(),
-      });
-    }
-
-    // for the stars, short fine rays that turn a little as they fade
-    if (tier >= 9) {
-      const rays = this.add.graphics().setPosition(x, y).setDepth(FX).setBlendMode(ADD);
-      const k = 8;
-      const inner = rs * 0.9;
-      const len = rs * 1.35;
-      for (let i = 0; i < k; i++) {
-        const a = (i / k) * Math.PI * 2;
-        rays.fillStyle(light, 0.45);
-        rays.beginPath();
-        rays.moveTo(Math.cos(a - 0.035) * inner, Math.sin(a - 0.035) * inner);
-        rays.lineTo(Math.cos(a) * len, Math.sin(a) * len);
-        rays.lineTo(Math.cos(a + 0.035) * inner, Math.sin(a + 0.035) * inner);
-        rays.closePath();
-        rays.fillPath();
-      }
-      rays.setScale(0.9);
-      this.tweens.add({
-        targets: rays,
-        props: { scale: { value: 1.08, ease: 'Cubic.out' }, rotation: { value: 0.25, ease: 'Cubic.out' }, alpha: { value: 0, ease: 'Quad.in' } },
-        duration: 520,
-        onComplete: () => rays.destroy(),
-      });
-    }
-
-    if (points > 0) {
-      const label = this.text(x, y, '+' + Math.round(points), 26 + tier * 2).setOrigin(0.5).setDepth(FX + 1).setStroke('#150a33', 6);
-      this.tweens.add({ targets: label, y: y - 70, alpha: 0, duration: 750, ease: 'Cubic.out', onComplete: () => label.destroy() });
-    }
-    if (this.combo >= 2 && points > 0) {
-      this.comboText.setText('COMBO x' + this.combo).setAlpha(1).setScale(1.3);
+    // merges in quick succession get a cheer (no points: just the fun of it)
+    if (this.combo >= 2) {
+      const cheer = COMBO_WORDS[Math.min(this.combo, COMBO_WORDS.length - 1)];
+      this.comboText.setText(cheer).setAlpha(1).setScale(1.3);
       this.tweens.killTweensOf(this.comboText);
       this.tweens.add({ targets: this.comboText, scale: 1, duration: 150 });
       this.tweens.add({ targets: this.comboText, alpha: 0, delay: 800, duration: 300 });
@@ -2379,6 +2283,11 @@ export class GameScene extends Phaser.Scene {
     this.drawAbilities(now);
     this.drawDanger(now);
     this.drawBeam(now);
+    this.skinTrail(now);
+    if (this.inGame && now >= this.saveAt) {
+      this.saveAt = now + 4000;
+      this.saveGame();
+    }
   }
 
   /**
@@ -2544,6 +2453,8 @@ export class GameScene extends Phaser.Scene {
   /** culprit: the planet that stayed outside the ring. It is pointed out before the results appear. */
   gameOver(culprit = null) {
     this.state = 'over';
+    this.inGame = false;
+    Meta.clearSavedGame(); // a lost game cannot be continued later; only a revive goes on
     this.culprit = culprit;
     this.aiming = false;
     this.setPower(0);
@@ -2591,28 +2502,27 @@ export class GameScene extends Phaser.Scene {
   }
 
   showGameOver() {
-    const earned = this.bankCoins();
-    this.saveDailyBest();
-    const items = this.panel(70, 250, W - 140, 800);
+    const items = this.panel(70, 250, W - 140, 836);
     const add = (o) => {
       items.push(o.setDepth(OVERLAY));
       return o;
     };
     add(this.text(W / 2, 312, 'GAME OVER', 50).setOrigin(0.5));
-    add(this.text(W / 2, 400, String(this.score), 92, '#ffd93d').setOrigin(0.5));
-    const isBest = this.score > 0 && this.score >= this.best;
-    add(this.text(W / 2, 474, isBest ? 'NEW BEST!' : 'BEST ' + this.best, 26, isBest ? '#8ce99a' : '#b9a8e6').setOrigin(0.5));
-    if (this.culprit) add(this.text(W / 2, 506, `A ${TIERS[this.culprit.tier].name} stayed outside the ring`, 20, '#ff9fb2').setOrigin(0.5));
+    if (this.culprit) add(this.text(W / 2, 362, `A ${TIERS[this.culprit.tier].name} stayed outside the ring`, 20, '#ff9fb2').setOrigin(0.5));
 
+    // the biggest body made in this game, in the middle
     if (!hasKindTextures(this, this.biggest)) makeKindTextures(this, this.biggest);
-    add(this.portrait(W / 2 - 150, 570, this.biggest, 38));
-    add(this.text(W / 2 - 80, 536, 'BIGGEST', 18, '#b9a8e6'));
-    add(this.text(W / 2 - 80, 558, TIERS[this.biggest].name, 32));
-    add(this.text(W / 2 - 80, 598, `${this.seen.length} discovered`, 18, '#b9a8e6'));
-    add(this.add.image(W / 2 - 92, 656, 'coin').setScale(0.8 / TEX_SCALE));
-    add(this.text(W / 2 - 70, 656, `+${earned} stardust`, 26, '#ffe08a').setOrigin(0, 0.5));
+    add(this.portrait(W / 2, 470, this.biggest, 52));
+    add(this.text(W / 2, 562, TIERS[this.biggest].name, 34).setOrigin(0.5));
+    add(
+      this.text(W / 2, 600, this.newRecord ? 'NEW RECORD!' : `${this.seen.length} discovered`, 20, this.newRecord ? '#8ce99a' : '#b9a8e6').setOrigin(0.5),
+    );
+    if (this.runGems > 0) {
+      const t = add(this.text(W / 2 + 16, 646, `+${this.runGems} found`, 24, '#9ff3ff').setOrigin(0.5));
+      add(this.add.image(t.x - t.width / 2 - 22, 646, 'gem').setScale(0.6 / TEX_SCALE));
+    }
 
-    let y = 720;
+    let y = 730;
     if (!this.revived) {
       // one revive per game: free with Premium, otherwise for an ad
       const free = this.premium;
@@ -2674,6 +2584,7 @@ export class GameScene extends Phaser.Scene {
   applyPremium() {
     this.premium = true;
     for (const [key, b] of Object.entries(this.boost)) {
+      if (b.got >= BOOSTERS[key].cap) continue; // already at the maximum (or none today, in a daily rule)
       b.left += BOOSTERS[key].cap - b.got;
       b.got = BOOSTERS[key].cap;
     }
@@ -2688,6 +2599,8 @@ export class GameScene extends Phaser.Scene {
   revive() {
     this.revived = true;
     this.culprit = null;
+    this.inGame = true; // the game goes on, and is saved again as it goes
+    this.saveAt = this.time.now + 1000;
     const now = this.time.now;
     const from = this.ringScreen();
     this.reviveRing = RING[Math.min(this.runMax + 1, RING.length - 1)];
@@ -2804,4 +2717,4 @@ export class GameScene extends Phaser.Scene {
   }
 }
 
-Object.assign(GameScene.prototype, SpecialsMixin, AbilitiesMixin, EventsMixin, MenuMixin);
+Object.assign(GameScene.prototype, SpecialsMixin, AbilitiesMixin, EventsMixin, MenuMixin, SkinFxMixin);

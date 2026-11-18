@@ -939,6 +939,553 @@ export const MAX_PLANET = HOLE - 1; // the largest ordinary body
 export const defOf = (kind) => (typeof kind === 'number' ? TIERS[kind] : SPECIALS[kind]);
 export const partInfo = (name) => PARTS[name];
 
+// ---------- skins ----------
+// The chain, Moon to Pulsar, can be drawn in a skin: its own surfaces, light layer and parts,
+// not just a colour filter. Textures are keyed by skin, so only the skin in use is ever made.
+// The black hole and the special bodies (comet, bomb, dark matter) always keep their own look.
+
+export const ART_SKINS = ['classic', 'kawaii', 'candy', 'pixel', 'neon'];
+let SKIN = 'classic';
+
+export function setArtSkin(id) {
+  SKIN = ART_SKINS.includes(id) ? id : 'classic';
+}
+
+export const artSkin = () => SKIN;
+export const wearsSkin = (kind) => typeof kind === 'number' && kind < HOLE;
+const skinOf = (kind, skin) => (wearsSkin(kind) ? skin || SKIN : 'classic');
+const tagOf = (kind, skin) => {
+  const s = skinOf(kind, skin);
+  return s === 'classic' ? String(kind) : `${s}_${kind}`;
+};
+
+function toHsl(r, g, b) {
+  r /= 255;
+  g /= 255;
+  b /= 255;
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  const l = (max + min) / 2;
+  if (max === min) return [0, 0, l];
+  const d = max - min;
+  const s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+  let h;
+  if (max === r) h = (g - b) / d + (g < b ? 6 : 0);
+  else if (max === g) h = (b - r) / d + 2;
+  else h = (r - g) / d + 4;
+  return [h / 6, s, l];
+}
+
+function fromHsl(h, s, l, out) {
+  const hue = (t) => {
+    t = ((t % 1) + 1) % 1;
+    if (t < 1 / 6) return p + (q - p) * 6 * t;
+    if (t < 1 / 2) return q;
+    if (t < 2 / 3) return p + (q - p) * (2 / 3 - t) * 6;
+    return p;
+  };
+  const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+  const p = 2 * l - q;
+  out[0] = 255 * (s ? hue(h + 1 / 3) : l);
+  out[1] = 255 * (s ? hue(h) : l);
+  out[2] = 255 * (s ? hue(h - 1 / 3) : l);
+  return out;
+}
+
+/** Soft, milky pastel of a colour (kawaii). */
+function pastelize(out) {
+  const [h, s, l] = toHsl(out[0], out[1], out[2]);
+  return fromHsl(h, Math.min(0.66, s * 0.8 + 0.16), 0.7 + l * 0.2, out);
+}
+
+/** The glowing tube colour of a body's colour (neon): full saturation, bright. */
+function neonOf(color) {
+  const [r, g, b] = rgb(color);
+  const [h, s] = toHsl(r, g, b);
+  return fromHsl(h, s < 0.08 ? 0 : 1, s < 0.08 ? 0.85 : 0.62, [0, 0, 0]).map(Math.round);
+}
+/** The same, as 0xRRGGBB (for tints). */
+export function neonColor(color) {
+  const c = neonOf(color);
+  return (c[0] << 16) | (c[1] << 8) | c[2];
+}
+const css3 = (c, a) => `rgba(${c[0] | 0},${c[1] | 0},${c[2] | 0},${a})`;
+
+function eachPixel(canvas, fn) {
+  const ctx = canvas.getContext('2d');
+  const img = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  const d = img.data;
+  const px = [0, 0, 0];
+  for (let i = 0; i < d.length; i += 4) {
+    if (!d[i + 3]) continue;
+    px[0] = d[i];
+    px[1] = d[i + 1];
+    px[2] = d[i + 2];
+    d[i + 3] = fn(px, d[i + 3]);
+    d[i] = px[0];
+    d[i + 1] = px[1];
+    d[i + 2] = px[2];
+  }
+  ctx.putImageData(img, 0, 0);
+  return canvas;
+}
+
+// --- pixel: everything sits on one grid of big square pixels, with a limited palette ---
+
+const PX = 3.2; // world units per pixel
+
+/** Snaps colours to a small palette: a few hues, saturations and shades (never quite white). */
+function paletteSnap(px) {
+  const [h, s, l] = toHsl(px[0], px[1], px[2]);
+  fromHsl(Math.round(h * 24) / 24, Math.round(s * 4) / 4, Math.min(6 / 7, Math.round(l * 7) / 7), px);
+}
+
+/**
+ * A part turned into pixels: cells across its canvas, snapped colours. A solid part (a ring) gets
+ * stepped alpha, kept even where it is thin; a glow keeps its smooth alpha, so it shades off in
+ * blocks instead of becoming a dull disc.
+ */
+function pixelateCanvas(canvas, cells, glowing) {
+  const small = document.createElement('canvas');
+  small.width = cells;
+  small.height = cells;
+  const sctx = small.getContext('2d');
+  sctx.imageSmoothingEnabled = true;
+  sctx.imageSmoothingQuality = 'high';
+  sctx.drawImage(canvas, 0, 0, cells, cells);
+  eachPixel(small, (px, a) => {
+    paletteSnap(px);
+    if (glowing) return a;
+    return a < 20 ? 0 : Math.ceil((a / 255) * 4) * 63.75;
+  });
+  const ctx = canvas.getContext('2d');
+  ctx.save();
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.imageSmoothingEnabled = false;
+  ctx.drawImage(small, 0, 0, canvas.width, canvas.height);
+  ctx.restore();
+  return canvas;
+}
+
+/** A sphere on a coarse grid: one shader sample per cell, hard edges. */
+function renderGrid(cells, rCells, shadeFn, frame) {
+  const canvas = document.createElement('canvas');
+  canvas.width = cells;
+  canvas.height = cells;
+  const ctx = canvas.getContext('2d');
+  const img = ctx.createImageData(cells, cells);
+  const d = img.data;
+  const c = cells / 2;
+  const out = [0, 0, 0, 1];
+  const P = [0, 0, 0];
+  const edge = 1 + 0.35 / rCells;
+  for (let j = 0; j < cells; j++) {
+    const y0 = (j + 0.5 - c) / rCells;
+    for (let i = 0; i < cells; i++) {
+      const x0 = (i + 0.5 - c) / rCells;
+      const rr = x0 * x0 + y0 * y0;
+      if (rr > edge) continue;
+      const k = rr > 0.998 ? 0.998 / Math.sqrt(rr) : 1;
+      const x = x0 * k;
+      const y = y0 * k;
+      const z = Math.sqrt(Math.max(0, 1 - x * x - y * y));
+      out[3] = 1;
+      if (frame) {
+        frame(x, y, z, P);
+        shadeFn(P, z, out);
+      } else {
+        shadeFn(x, y, z, out);
+      }
+      const o = (j * cells + i) * 4;
+      d[o] = out[0];
+      d[o + 1] = out[1];
+      d[o + 2] = out[2];
+      d[o + 3] = Math.round(255 * clamp01(out[3]));
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+  return canvas;
+}
+
+function upscale(small, size) {
+  const c = document.createElement('canvas');
+  c.width = size;
+  c.height = size;
+  const ctx = c.getContext('2d');
+  ctx.imageSmoothingEnabled = false;
+  ctx.drawImage(small, 0, 0, size, size);
+  return c;
+}
+
+const gridOf = (def) => Math.max(10, Math.round(((def.r + PAD) * 2) / PX));
+
+/** Pixel shading, fixed on screen: a dark outline, two steps of shadow, a hard highlight. */
+function pixelLight(def, rCells, kind) {
+  const edge = 1 - 1.1 / rCells;
+  const OUT = rgb(shade(def.color, 0.32));
+  const star = kind >= 9;
+  const L = [-0.45, -0.55, 0.7];
+  const ll = Math.hypot(L[0], L[1], L[2]);
+  return (x, y, z, out) => {
+    if (Math.hypot(x, y) > edge) {
+      out[0] = OUT[0];
+      out[1] = OUT[1];
+      out[2] = OUT[2];
+      out[3] = 1;
+      return;
+    }
+    const lam = (x * L[0] + y * L[1] + z * L[2]) / ll;
+    out[0] = 255;
+    out[1] = 255;
+    out[2] = 255;
+    if (lam > 0.93) out[3] = 0.62;
+    else if (lam > 0.86) out[3] = 0.22;
+    else if (!star && lam < 0.08) {
+      out[0] = OUT[0];
+      out[1] = OUT[1];
+      out[2] = OUT[2];
+      out[3] = 0.42;
+    } else if (!star && lam < 0.36) {
+      out[0] = OUT[0];
+      out[1] = OUT[1];
+      out[2] = OUT[2];
+      out[3] = 0.2;
+    } else out[3] = 0;
+  };
+}
+
+// --- candy: glossy hard candy and jelly, each body its own flavour ---
+
+const CANDY_COLORS = [0xff6fa8, 0xffd84d, 0x6fe3b4, 0x6fb8ff, 0xff9a4d, 0xffffff, 0xc59bff];
+// [pattern, colour A, colour B]
+const CANDY = [
+  ['sprinkles', 0xf8f1ff, 0xe2d3fb], // Moon: a sugared gumdrop with sprinkles
+  ['swirl', 0xc98a46, 0xf8e6c6], // Mercury: caramel swirl
+  ['swirl', 0xff4d6e, 0xfff0f3], // Mars: strawberry swirl
+  ['bands', 0xffd13d, 0xfff6c4], // Venus: lemon drop
+  ['marble', 0x3ea8ff, 0x86e36a], // Earth: blue raspberry and green apple
+  ['swirl', 0x5068ff, 0xeef1ff], // Neptune: blueberry mint
+  ['swirl', 0x2fdcc4, 0xf0fffb], // Uranus: spearmint
+  ['jelly', 0xffa45c, 0xffe8cc], // Saturn: peach jelly
+  ['gobstopper', 0xff7a59, 0xfff2e0], // Jupiter: a gobstopper
+  ['jelly', 0xff9a1a, 0xfff0a0], // Sun: orange jelly
+  ['jelly', 0xff2f55, 0xffc4cf], // Red Giant: cherry jelly
+  ['jelly', 0x4a86ff, 0xd8e8ff], // Blue Giant: blue raspberry jelly
+  ['cotton', 0xff9ad6, 0x9ad8ff], // Supernova: cotton candy
+  ['rainbow', 0xffffff, 0xffffff], // Pulsar: a rainbow lollipop
+];
+const GOBSTOPPER = [0xff7a59, 0xffd166, 0xff8fc8, 0x9b7bff, 0x6fe3b4, 0xfff2e0];
+
+function capsules(seed, count, size) {
+  const rnd = seeded(seed);
+  const list = [];
+  for (let i = 0; i < count; i++) {
+    const lat = Math.asin(rnd() * 2 - 1);
+    const lon = rnd() * TAU;
+    list.push({ c: dirOf(lat, lon), turn: rnd() * Math.PI, color: rgb(CANDY_COLORS[i % CANDY_COLORS.length]), len: size * (0.8 + rnd() * 0.5) });
+  }
+  return list;
+}
+
+/** Is P on one of the sprinkles? Returns its colour, or null. */
+function onSprinkle(list, P, width) {
+  for (const s of list) {
+    const c = s.c;
+    const dot = P[0] * c[0] + P[1] * c[1] + P[2] * c[2];
+    if (dot < 0.9) continue;
+    let ex = c[2];
+    let ez = -c[0];
+    const el = Math.hypot(ex, ez) || 1;
+    ex /= el;
+    ez /= el;
+    const nx = -c[1] * ez;
+    const ny = c[2] * ex - c[0] * ez;
+    const nz = c[1] * ex;
+    const dx = P[0] - c[0];
+    const dy = P[1] - c[1];
+    const dz = P[2] - c[2];
+    const u = dx * ex + dz * ez;
+    const v = dx * nx + dy * ny + dz * nz;
+    const cs = Math.cos(s.turn);
+    const sn = Math.sin(s.turn);
+    const a = Math.abs(u * cs + v * sn);
+    const b = Math.abs(-u * sn + v * cs);
+    const along = Math.max(0, a - s.len / 2);
+    if (along * along + b * b < width * width) return s.color;
+  }
+  return null;
+}
+
+function candySurface(kind) {
+  const [pattern, ca, cb] = CANDY[kind];
+  const A = rgb(ca);
+  const B = rgb(cb);
+  const EDGE = rgb(shade(ca, 0.72));
+  const n = makeNoise(300 + kind);
+  const m = makeNoise(320 + kind);
+  const sprinkles = pattern === 'sprinkles' || kind === 4 ? capsules(340 + kind, kind === 4 ? 16 : 34, 0.13) : null;
+  const bubbles = pattern === 'jelly' ? makeCraters(360 + kind, 7, 0.05, 0.12) : null;
+  const gob = bands(GOBSTOPPER);
+  const tmp = [0, 0, 0];
+  return (P, mu, out) => {
+    const lat = Math.asin(Math.max(-1, Math.min(1, -P[1])));
+    const lon = Math.atan2(P[0], P[2]);
+    let t = 0;
+    if (pattern === 'swirl') t = smooth(-0.18, 0.18, Math.sin(lon * 4 + lat * 5));
+    else if (pattern === 'bands') t = smooth(-0.25, 0.25, Math.sin(lat * 9 + 0.6 * fbm(n, P[0] * 2, P[1] * 2, P[2] * 2, 2)));
+    else if (pattern === 'marble') t = smooth(-0.3, 0.3, Math.sin((P[0] + P[1] * 0.6) * 5 + 5 * fbm(n, P[0] * 1.6, P[1] * 1.6, P[2] * 1.6, 3)));
+    else if (pattern === 'cotton') t = smooth(-0.15, 0.2, fbm(n, P[0] * 2.4, P[1] * 2.4, P[2] * 2.4, 4));
+    else if (pattern === 'sprinkles') t = smooth(-0.3, 0.4, fbm(n, P[0] * 2, P[1] * 2, P[2] * 2, 2)) * 0.5;
+    else if (pattern === 'jelly') t = Math.pow(mu, 1.6) * 0.75;
+    out[0] = A[0] + (B[0] - A[0]) * t;
+    out[1] = A[1] + (B[1] - A[1]) * t;
+    out[2] = A[2] + (B[2] - A[2]) * t;
+    if (pattern === 'gobstopper') gob(lat * 4.2 + 0.25 * fbm(n, P[0] * 2.2, P[1] * 2.2, P[2] * 2.2, 2), out);
+    if (pattern === 'rainbow') {
+      const h = (lon / TAU) * 2 + lat * 0.7;
+      fromHsl(h, 0.85, 0.66, out);
+      mixTo(out, WHITE, smooth(0.9, 0.99, Math.cos(lon * 6 + lat * 4.2)) * 0.85); // thin white spirals
+    }
+    if (pattern === 'cotton') mixTo(out, WHITE, smooth(0.18, 0.42, fbm(m, P[0] * 3, P[1] * 3, P[2] * 3, 3)) * 0.65);
+    if (bubbles) {
+      for (const c of bubbles) {
+        const dx = P[0] - c[0];
+        const dy = P[1] - c[1];
+        const dz = P[2] - c[2];
+        const d = Math.sqrt(dx * dx + dy * dy + dz * dz) / c[3];
+        if (d < 1.2) mixTo(out, WHITE, (smooth(1.15, 0.95, d) - smooth(0.85, 0.4, d) * 0.6) * 0.5);
+      }
+    }
+    if (sprinkles) {
+      const sc = onSprinkle(sprinkles, P, 0.028);
+      if (sc) {
+        tmp[0] = sc[0];
+        tmp[1] = sc[1];
+        tmp[2] = sc[2];
+        mixTo(out, tmp, 0.95);
+      }
+    }
+    // hard candy: a deeper colour toward the edge, a glow inside
+    mixTo(out, EDGE, Math.pow(1 - mu, 2.2) * 0.4);
+    scaleRGB(out, 1 + 0.07 * mu);
+    if (out[0] > 255) out[0] = 255;
+    if (out[1] > 255) out[1] = 255;
+    if (out[2] > 255) out[2] = 255;
+  };
+}
+
+/** Candy shine: a sharp window-shaped highlight, a softer sheen and a small reflection below. */
+function candyLight() {
+  return (x, y, z, out) => {
+    let a = 0;
+    const add = (v) => (a = a + v * (1 - a));
+    add(Math.min(1, Math.pow(1 - z, 3) * 0.32));
+    const sx = x + 0.3;
+    const sy = y + 0.36;
+    add(Math.exp(-(sx * sx + sy * sy) / 0.16) * 0.22);
+    const gx = x + 0.36;
+    const gy = y + 0.46;
+    add(smooth(0.016, 0.006, gx * gx * 1.4 + gy * gy * 2.6) * 0.92);
+    const rx = x - 0.42;
+    const ry = y - 0.5;
+    add(Math.exp(-(rx * rx * 2.5 + ry * ry * 6) / 0.012) * 0.38);
+    out[0] = 255;
+    out[1] = 255;
+    out[2] = 255;
+    out[3] = a;
+  };
+}
+
+// --- neon: dark glass spheres traced with glowing lines ---
+
+function neonSurface(kind) {
+  const def = TIERS[kind];
+  const col = neonOf(def.color);
+  const n = makeNoise(500 + kind);
+  const star = kind >= 9;
+  const w = 1.5 / def.r; // line width, about 1.5 world units whatever the size
+  const halo = 5 / def.r;
+  const latStep = def.r < 40 ? Math.PI / 4 : Math.PI / 6;
+  const lonStep = def.r < 40 ? Math.PI / 3 : Math.PI / 6;
+  const BASE = col.map((v) => v * 0.07 + 5);
+  return (P, mu, out) => {
+    const lat = Math.asin(Math.max(-1, Math.min(1, -P[1])));
+    const lon = Math.atan2(P[0], P[2]);
+    let dLat = Math.abs(lat - Math.round(lat / latStep) * latStep);
+    let dLon = Math.abs(lon - Math.round(lon / lonStep) * lonStep) * Math.cos(lat);
+    if (Math.abs(lat) > 1.25) dLon = 9; // no crowding at the poles
+    let I = 0;
+    const line = (d, k) => {
+      const v = Math.exp(-(d * d) / (w * w)) + 0.32 * Math.exp(-(d * d) / (halo * halo));
+      if (v * k > I) I = v * k;
+    };
+    line(dLat, 0.75);
+    line(dLon, 0.6);
+    // the body's own features become glowing contour lines
+    const c = fbm(n, P[0] * 1.5, P[1] * 1.5, P[2] * 1.5, 3);
+    for (const level of [-0.18, 0.05, 0.26]) line(Math.abs(c - level) * 1.6, 1);
+    if (star) {
+      const r = Math.sqrt(Math.max(0, 1 - mu * mu));
+      line(Math.abs(r - 0.42), 1);
+      line(Math.abs(r - 0.74), 0.85);
+    }
+    I = Math.min(1.25, I);
+    out[0] = BASE[0] * (0.6 + 0.4 * mu) + col[0] * I;
+    out[1] = BASE[1] * (0.6 + 0.4 * mu) + col[1] * I;
+    out[2] = BASE[2] * (0.6 + 0.4 * mu) + col[2] * I;
+    if (I > 0.85) mixTo(out, WHITE, (I - 0.85) * 1.6);
+    if (out[0] > 255) out[0] = 255;
+    if (out[1] > 255) out[1] = 255;
+    if (out[2] > 255) out[2] = 255;
+  };
+}
+
+// --- kawaii: milky pastels, little sparkles, a soft outline and a big toy-like shine ---
+
+function kawaiiFinish(canvas, kind, rPx) {
+  eachPixel(canvas, (px, a) => {
+    pastelize(px);
+    return a;
+  });
+  const ctx = canvas.getContext('2d');
+  const c = canvas.width / 2;
+  const rnd = seeded(700 + kind);
+  const count = 3 + (kind % 3);
+  for (let i = 0; i < count; i++) {
+    const a = rnd() * TAU;
+    const d = rPx * (0.2 + rnd() * 0.5);
+    const s = rPx * (0.06 + rnd() * 0.05);
+    ctx.globalAlpha = 0.85;
+    star4(ctx, c + Math.cos(a) * d, c + Math.sin(a) * d, s, '#ffffff');
+  }
+  ctx.globalAlpha = 1;
+  return canvas;
+}
+
+function kawaiiLight(def) {
+  const tone = pastelize(rgb(def.color));
+  const LINE = rgb(shade((Math.round(tone[0]) << 16) | (Math.round(tone[1]) << 8) | Math.round(tone[2]), 0.7));
+  return (x, y, z, out) => {
+    const r = Math.hypot(x, y);
+    let cr = 255;
+    let cg = 238;
+    let cb = 248;
+    let a = Math.min(1, Math.pow(1 - z, 2.2) * 0.4);
+    const gx = x + 0.36;
+    const gy = y + 0.4;
+    const g = smooth(0.034, 0.016, gx * gx + gy * gy * 1.3) * 0.85;
+    if (g > 0) {
+      cr = 255;
+      cg = 255;
+      cb = 255;
+      a = a + g * (1 - a);
+    }
+    const s2x = x + 0.12;
+    const s2y = y + 0.56;
+    a = a + smooth(0.004, 0.001, s2x * s2x + s2y * s2y) * 0.8 * (1 - a);
+    const line = smooth(0.9, 0.95, r);
+    if (line > 0) {
+      cr += (LINE[0] - cr) * line;
+      cg += (LINE[1] - cg) * line;
+      cb += (LINE[2] - cb) * line;
+      a = a + line * 0.9 * (1 - a);
+    }
+    out[0] = cr;
+    out[1] = cg;
+    out[2] = cb;
+    out[3] = a;
+  };
+}
+
+// --- which parts each skin uses ---
+
+const CANDY_PARTS = { saturnRing: 'candySaturnRing', uranusRing: 'candyUranusRing' };
+const NEON_PARTS = { saturnRing: 'neonSaturnRing', uranusRing: 'neonUranusRing' };
+
+/** The parts a body is drawn with in a skin: [name, front?]. */
+export function partsOf(kind, skin) {
+  const def = defOf(kind);
+  const s = skinOf(kind, skin);
+  if (s === 'candy') return def.parts.map(([name, front]) => [CANDY_PARTS[name] || name, front]);
+  if (s === 'neon') return [['neonHalo', false], ...def.parts.map(([name, front]) => [NEON_PARTS[name] || name, front])];
+  return def.parts;
+}
+
+/** Does the body have a light layer in this skin? Every skinned body does; classic stars may not. */
+export const hasLight = (kind, skin) => skinOf(kind, skin) !== 'classic' || !!defOf(kind).light;
+
+/** One elliptical band between angles a0 and a1 (drawn as one closed shape). */
+function ringArc(ctx, R, r0, r1, tilt, a0, a1) {
+  ctx.beginPath();
+  ctx.ellipse(0, 0, r1 * R, r1 * R * tilt, 0, a0, a1, false);
+  ctx.ellipse(0, 0, r0 * R, r0 * R * tilt, 0, a1, a0, true);
+  ctx.closePath();
+  ctx.fill();
+}
+
+function candyRing(ctx, R, front, { turn, tilt, r0, r1, colors, stripes }) {
+  ctx.rotate(rad(turn));
+  const from = front ? 0 : Math.PI;
+  for (let i = 0; i < stripes; i++) {
+    const a0 = from + (i / stripes) * Math.PI;
+    const a1 = from + ((i + 1) / stripes) * Math.PI + 0.004;
+    ctx.fillStyle = colors[i % colors.length];
+    ringArc(ctx, R, r0, r1, tilt, a0, a1);
+  }
+  // a glossy line along it
+  ctx.strokeStyle = 'rgba(255,255,255,.55)';
+  ctx.lineWidth = R * 0.025;
+  ctx.beginPath();
+  const mid = r0 + (r1 - r0) * 0.35;
+  ctx.ellipse(0, 0, mid * R, mid * R * tilt, 0, from, from + Math.PI, false);
+  ctx.stroke();
+}
+
+function neonRing(ctx, R, front, def, { turn, tilt, radii }) {
+  ctx.rotate(rad(turn));
+  const col = neonOf(def.color);
+  const from = front ? 0 : Math.PI;
+  for (const r of radii) {
+    for (const [width, alpha] of [[0.09, 0.18], [0.045, 0.4], [0.018, 1]]) {
+      ctx.strokeStyle = width < 0.02 ? 'rgba(255,255,255,.95)' : css3(col, alpha);
+      ctx.lineWidth = R * width;
+      ctx.beginPath();
+      ctx.ellipse(0, 0, r * R, r * R * tilt, 0, from, from + Math.PI, false);
+      ctx.stroke();
+    }
+  }
+}
+
+Object.assign(PARTS, {
+  candySaturnRing: {
+    size: 2,
+    draw: (ctx, R, front) => candyRing(ctx, R, front, { turn: -14, tilt: 0.3, r0: 1.3, r1: 1.82, colors: ['#ff7fb0', '#fff4f8'], stripes: 9 }),
+  },
+  candyUranusRing: {
+    size: 1.9,
+    draw: (ctx, R, front) => candyRing(ctx, R, front, { turn: 78, tilt: 0.22, r0: 1.42, r1: 1.66, colors: ['#5fe3c8', '#f2fffb'], stripes: 7 }),
+  },
+  neonSaturnRing: {
+    size: 2,
+    blend: 'add',
+    draw: (ctx, R, front, def) => neonRing(ctx, R, front, def, { turn: -14, tilt: 0.3, radii: [1.42, 1.72] }),
+  },
+  neonUranusRing: {
+    size: 1.9,
+    blend: 'add',
+    draw: (ctx, R, front, def) => neonRing(ctx, R, front, def, { turn: 78, tilt: 0.22, radii: [1.5, 1.66] }),
+  },
+  neonHalo: {
+    size: 1.6,
+    blend: 'add',
+    draw(ctx, R, front, def) {
+      const c = neonOf(def.color);
+      glow(ctx, R, 1.6, [[0, css3(c, 0.55)], [0.42, css3(c, 0.2)], [1, css3(c, 0)]]);
+    },
+  },
+});
+
 // ---------- rendering ----------
 
 /** Renders a sphere of radius rPx into a square canvas, calling shadeFn for every covered pixel. */
@@ -1021,54 +1568,130 @@ const FRAMES = {
   bomb: [0.3, -0.2, 0.4],
 };
 
+/** A body's surface in a skin, rendered at `scale` pixels per world unit. */
+function renderSurface(kind, skin, scale) {
+  const def = defOf(kind);
+  const s = skinOf(kind, skin);
+  const size = Math.ceil((def.r + PAD) * 2 * scale);
+  const f = FRAMES[def.surface];
+  const frame = frameOf(f[0], f[1], f[2]);
+  if (s === 'pixel') {
+    const cells = gridOf(def);
+    const rCells = (def.r * cells) / ((def.r + PAD) * 2);
+    const small = renderGrid(cells, rCells, SURFACES[def.surface](), frame);
+    eachPixel(small, (px, a) => {
+      paletteSnap(px);
+      return a;
+    });
+    return upscale(small, size);
+  }
+  const shader = s === 'candy' ? candySurface(kind) : s === 'neon' ? neonSurface(kind) : SURFACES[def.surface]();
+  const canvas = renderSphere(size, def.r * scale, shader, frame);
+  if (s === 'kawaii') kawaiiFinish(canvas, kind, def.r * scale);
+  return canvas;
+}
+
+/** A body's light layer in a skin (it stays fixed on screen while the body turns). */
+function renderLight(kind, skin, scale) {
+  const def = defOf(kind);
+  const s = skinOf(kind, skin);
+  const size = Math.ceil((def.r + PAD) * 2 * scale);
+  if (s === 'pixel') {
+    const cells = gridOf(def);
+    const rCells = (def.r * cells) / ((def.r + PAD) * 2);
+    return upscale(renderGrid(cells, rCells, pixelLight(def, rCells, kind), null), size);
+  }
+  const rPx = (def.r * size) / ((def.r + PAD) * 2);
+  let fn;
+  if (s === 'kawaii') fn = kawaiiLight(def);
+  else if (s === 'candy') fn = candyLight();
+  else if (s === 'neon') {
+    const c = neonOf(def.color);
+    fn = glossFor({ rim: (c[0] << 16) | (c[1] << 8) | c[2], rimK: 1.1, sheen: 0, gloss: 0.32 });
+  }
+  else fn = glossFor(def.light);
+  return renderSphere(size, rPx, fn, null);
+}
+
 const surfaceCanvases = new Map();
 const lightCanvases = new Map();
 
-function surfaceCanvas(kind) {
-  let c = surfaceCanvases.get(kind);
+function surfaceCanvas(kind, skin) {
+  const key = tagOf(kind, skin);
+  let c = surfaceCanvases.get(key);
   if (!c) {
-    const def = defOf(kind);
-    const size = Math.ceil((def.r + PAD) * 2 * TEX_SCALE);
-    const f = FRAMES[def.surface];
-    c = renderSphere(size, def.r * TEX_SCALE, SURFACES[def.surface](), frameOf(f[0], f[1], f[2]));
-    surfaceCanvases.set(kind, c);
+    c = renderSurface(kind, skin, TEX_SCALE);
+    surfaceCanvases.set(key, c);
   }
   return c;
 }
 
-function lightCanvas(kind) {
-  let c = lightCanvases.get(kind);
+function lightCanvas(kind, skin) {
+  const key = tagOf(kind, skin);
+  let c = lightCanvases.get(key);
   if (!c) {
-    const def = defOf(kind);
     // lighting is smooth, so it is rendered at a modest resolution
-    const s = Math.min(TEX_SCALE, 96 / def.r);
-    const size = Math.ceil((def.r + PAD) * 2 * s);
-    c = renderSphere(size, (def.r * size) / ((def.r + PAD) * 2), glossFor(def.light), null);
-    lightCanvases.set(kind, c);
+    c = renderLight(kind, skin, Math.min(TEX_SCALE, 96 / defOf(kind).r));
+    lightCanvases.set(key, c);
   }
   return c;
 }
 
-function drawPart(ctx, name, R, front) {
+/** A part (ring, glow...) of a body, drawn at radius R into its own canvas, in the skin's style. */
+function partCanvas(name, kind, R, front, skin) {
+  const def = defOf(kind);
+  const s = skinOf(kind, skin);
+  const span = PARTS[name].size * R * 2;
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.ceil(span * TEX_SCALE);
+  canvas.height = canvas.width;
+  const ctx = canvas.getContext('2d');
+  ctx.scale(TEX_SCALE, TEX_SCALE);
+  ctx.translate(span / 2, span / 2);
   ctx.save();
-  PARTS[name].draw(ctx, R, front);
+  PARTS[name].draw(ctx, R, front, def);
   ctx.restore();
+  const glowing = PARTS[name].blend === 'add';
+  if (s === 'kawaii' && !glowing) {
+    eachPixel(canvas, (px, a) => {
+      pastelize(px);
+      return a;
+    });
+  } else if (s === 'pixel') {
+    pixelateCanvas(canvas, Math.max(8, Math.round((PARTS[name].size * def.r * 2) / PX)), glowing);
+  }
+  return canvas;
 }
 
-/** Static picture of a body, centred on (0,0): used for icons, the album and previews. */
-export function drawPortrait(ctx, kind, R) {
+/**
+ * Static picture of a body, centred on (0,0): used for icons, the album and previews.
+ * fresh: render the surface at just the size needed instead of using the full-size textures
+ * (for shop previews of skins not in use).
+ */
+export function drawPortrait(ctx, kind, R, skin, fresh = false) {
   const def = defOf(kind);
-  for (const [name, front] of def.parts) {
-    if (front || PARTS[name].spin === 'velocity') continue;
-    ctx.save();
-    if (PARTS[name].blend === 'add') ctx.globalCompositeOperation = 'lighter';
-    drawPart(ctx, name, R, false);
-    ctx.restore();
-  }
+  const s = skinOf(kind, skin);
+  const parts = partsOf(kind, s);
+  const layer = (front) => {
+    for (const [name, isFront] of parts) {
+      if (isFront !== front || PARTS[name].spin === 'velocity') continue;
+      const span = PARTS[name].size * R * 2;
+      ctx.save();
+      if (PARTS[name].blend === 'add') ctx.globalCompositeOperation = 'lighter';
+      ctx.drawImage(partCanvas(name, kind, R, front, s), -span / 2, -span / 2, span, span);
+      ctx.restore();
+    }
+  };
+  layer(false);
   const span = ((def.r + PAD) * 2 * R) / def.r;
-  ctx.drawImage(surfaceCanvas(kind), -span / 2, -span / 2, span, span);
-  if (def.light) ctx.drawImage(lightCanvas(kind), -span / 2, -span / 2, span, span);
-  for (const [name, front] of def.parts) if (front) drawPart(ctx, name, R, true);
+  const scale = (R / def.r) * TEX_SCALE;
+  ctx.save();
+  if (s === 'pixel') ctx.imageSmoothingEnabled = false;
+  ctx.drawImage(fresh ? renderSurface(kind, s, scale) : surfaceCanvas(kind, s), -span / 2, -span / 2, span, span);
+  if (hasLight(kind, s)) ctx.drawImage(fresh ? renderLight(kind, s, Math.min(scale, 96 / R)) : lightCanvas(kind, s), -span / 2, -span / 2, span, span);
+  ctx.restore();
+  layer(true);
+  if (s === 'kawaii') drawFace(ctx, R * 1.04, 'happy');
 }
 
 function canvasTex(scene, key, w, h, draw) {
@@ -1084,26 +1707,44 @@ function canvasTex(scene, key, w, h, draw) {
 
 export const PORTRAIT_R = 48;
 export const PORTRAIT_SIZE = PORTRAIT_R * 4.6;
-export const surfaceKey = (kind) => `surface_${kind}`;
-export const lightKey = (kind) => `light_${kind}`;
-export const partKey = (kind, i) => `part_${kind}_${i}`;
-export const portraitKey = (kind) => `portrait_${kind}`;
+export const surfaceKey = (kind, skin) => `surface_${tagOf(kind, skin)}`;
+export const lightKey = (kind, skin) => `light_${tagOf(kind, skin)}`;
+export const partKey = (kind, i, skin) => `part_${tagOf(kind, skin)}_${i}`;
+export const portraitKey = (kind, skin) => `portrait_${tagOf(kind, skin)}`;
 export const ALL_KINDS = [...TIERS.keys(), 'comet', 'wrecker', 'bomb'];
 
-/** Everything one body needs: surface, lighting, parts and its portrait. */
+/** Everything one body needs in the skin in use: surface, lighting, parts and its portrait. */
 export function makeKindTextures(scene, kind) {
-  const def = defOf(kind);
-  const R = def.r;
-  if (!scene.textures.exists(surfaceKey(kind))) scene.textures.addCanvas(surfaceKey(kind), surfaceCanvas(kind));
-  if (def.light && !scene.textures.exists(lightKey(kind))) scene.textures.addCanvas(lightKey(kind), lightCanvas(kind));
-  def.parts.forEach(([name, front], i) => {
-    const s = PARTS[name].size * R * 2;
-    canvasTex(scene, partKey(kind, i), s, s, (ctx) => drawPart(ctx, name, R, front));
+  const s = skinOf(kind);
+  const R = defOf(kind).r;
+  if (!scene.textures.exists(surfaceKey(kind))) scene.textures.addCanvas(surfaceKey(kind), surfaceCanvas(kind, s));
+  if (hasLight(kind, s) && !scene.textures.exists(lightKey(kind))) scene.textures.addCanvas(lightKey(kind), lightCanvas(kind, s));
+  partsOf(kind, s).forEach(([name, front], i) => {
+    if (!scene.textures.exists(partKey(kind, i))) scene.textures.addCanvas(partKey(kind, i), partCanvas(name, kind, R, front, s));
   });
-  canvasTex(scene, portraitKey(kind), PORTRAIT_SIZE, PORTRAIT_SIZE, (ctx) => drawPortrait(ctx, kind, PORTRAIT_R));
+  canvasTex(scene, portraitKey(kind), PORTRAIT_SIZE, PORTRAIT_SIZE, (ctx) => drawPortrait(ctx, kind, PORTRAIT_R, s));
 }
 
 export const hasKindTextures = (scene, kind) => scene.textures.exists(portraitKey(kind));
+
+/** Frees the textures of a skin that is no longer in use. */
+export function dropSkinTextures(scene, skin) {
+  if (skin === 'classic') return;
+  for (let kind = 0; kind < HOLE; kind++) {
+    const tag = `${skin}_${kind}`;
+    surfaceCanvases.delete(tag);
+    lightCanvases.delete(tag);
+    for (const key of [surfaceKey(kind, skin), lightKey(kind, skin), portraitKey(kind, skin)]) if (scene.textures.exists(key)) scene.textures.remove(key);
+    for (let i = 0; i < 4; i++) if (scene.textures.exists(partKey(kind, i, skin))) scene.textures.remove(partKey(kind, i, skin));
+  }
+}
+
+/** A small picture of a body in any skin, for the shop. Returns its texture key. */
+export function skinPreview(scene, skin, kind, R) {
+  const key = `preview_${skin}_${kind}_${R}`;
+  if (!scene.textures.exists(key)) canvasTex(scene, key, R * 4.6, R * 4.6, (ctx) => drawPortrait(ctx, kind, R, skin, true));
+  return key;
+}
 
 /** Shared textures: particles, glows, icons. Planet textures are made separately with makeKindTextures. */
 export function makeCommonTextures(scene) {
@@ -1218,48 +1859,95 @@ export function makeCommonTextures(scene) {
     }
   });
 
-  // a golden planet's shine: a warm rim and a few twinkles, drawn over it (at radius FACE_R)
-  canvasTex(scene, 'goldShine', FACE_R * 3, FACE_R * 3, (ctx) => {
-    const R = FACE_R;
-    const g = ctx.createRadialGradient(0, 0, R * 0.8, 0, 0, R * 1.45);
-    g.addColorStop(0, 'rgba(255,214,90,0)');
-    g.addColorStop(0.35, 'rgba(255,214,90,.55)');
-    g.addColorStop(1, 'rgba(255,190,60,0)');
-    ctx.fillStyle = g;
-    ctx.beginPath();
-    ctx.arc(0, 0, R * 1.45, 0, TAU);
-    ctx.fill();
-    const rnd = seeded(31);
-    for (let i = 0; i < 6; i++) {
-      const a = (i / 6) * TAU + rnd() * 0.5;
-      const d = R * (0.55 + rnd() * 0.6);
-      star4(ctx, Math.cos(a) * d, Math.sin(a) * d, R * (0.12 + rnd() * 0.1), '#fff6c8');
-    }
-  });
-
   // cute faces for the face skin, at radius FACE_R: happy, blinking, surprised
   for (const mood of ['happy', 'blink', 'wow']) {
     canvasTex(scene, `face_${mood}`, FACE_R * 2, FACE_R * 2, (ctx) => drawFace(ctx, FACE_R, mood));
   }
 
-  // stardust, the coin of the game
-  canvasTex(scene, 'coin', 40, 40, (ctx) => {
-    const g = ctx.createLinearGradient(-14, -14, 14, 14);
-    g.addColorStop(0, '#fff3b0');
-    g.addColorStop(0.5, '#ffc93d');
-    g.addColorStop(1, '#e08a12');
-    ctx.fillStyle = g;
+  // the diamond, the currency of the game
+  canvasTex(scene, 'gem', 48, 48, (ctx) => drawGem(ctx, 17));
+  // particles for the skins' effects
+  canvasTex(scene, 'heart', 32, 32, (ctx) => {
     ctx.beginPath();
-    ctx.arc(0, 0, 16, 0, TAU);
+    ctx.moveTo(0, 11);
+    ctx.bezierCurveTo(-15, 1, -12, -12, 0, -5);
+    ctx.bezierCurveTo(12, -12, 15, 1, 0, 11);
+    ctx.fillStyle = '#ffffff';
     ctx.fill();
-    ctx.lineWidth = 2.5;
-    ctx.strokeStyle = '#b8650a';
-    ctx.stroke();
-    star4(ctx, 0, 0, 10, '#fffdf0');
+  });
+  canvasTex(scene, 'px', 12, 12, (ctx) => {
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(-5, -5, 10, 10);
+  });
+  canvasTex(scene, 'sprinkle', 24, 10, (ctx) => {
+    ctx.beginPath();
+    ctx.moveTo(-8, -3);
+    ctx.lineTo(8, -3);
+    ctx.arc(8, 0, 3, -Math.PI / 2, Math.PI / 2);
+    ctx.lineTo(-8, 3);
+    ctx.arc(-8, 0, 3, Math.PI / 2, (3 * Math.PI) / 2);
+    ctx.fillStyle = '#ffffff';
+    ctx.fill();
   });
 }
 
-/** Radius the face and gold-shine textures are drawn at; they are scaled to each planet. */
+/** A brilliant-cut diamond of half-width w, centred on (0,0). */
+export function drawGem(ctx, w) {
+  const top = -w * 0.62;
+  const girdle = -w * 0.12;
+  const tip = w * 0.95;
+  const table = w * 0.5;
+  // the crown
+  ctx.beginPath();
+  ctx.moveTo(-table, top);
+  ctx.lineTo(table, top);
+  ctx.lineTo(w, girdle);
+  ctx.lineTo(-w, girdle);
+  ctx.closePath();
+  const g1 = ctx.createLinearGradient(0, top, 0, girdle);
+  g1.addColorStop(0, '#e9fdff');
+  g1.addColorStop(1, '#7fe2ff');
+  ctx.fillStyle = g1;
+  ctx.fill();
+  // the pavilion
+  ctx.beginPath();
+  ctx.moveTo(-w, girdle);
+  ctx.lineTo(w, girdle);
+  ctx.lineTo(0, tip);
+  ctx.closePath();
+  const g2 = ctx.createLinearGradient(-w, 0, w, tip);
+  g2.addColorStop(0, '#4fc6ff');
+  g2.addColorStop(0.55, '#2a8cf0');
+  g2.addColorStop(1, '#1d5fd0');
+  ctx.fillStyle = g2;
+  ctx.fill();
+  // facets
+  ctx.strokeStyle = 'rgba(255,255,255,.75)';
+  ctx.lineWidth = w * 0.06;
+  ctx.lineJoin = 'round';
+  ctx.beginPath();
+  ctx.moveTo(-table * 0.35, top);
+  ctx.lineTo(-w * 0.45, girdle);
+  ctx.lineTo(0, tip);
+  ctx.lineTo(w * 0.45, girdle);
+  ctx.lineTo(table * 0.35, top);
+  ctx.moveTo(-w, girdle);
+  ctx.lineTo(w, girdle);
+  ctx.stroke();
+  ctx.strokeStyle = 'rgba(20,60,150,.55)';
+  ctx.lineWidth = w * 0.07;
+  ctx.beginPath();
+  ctx.moveTo(-table, top);
+  ctx.lineTo(table, top);
+  ctx.lineTo(w, girdle);
+  ctx.lineTo(0, tip);
+  ctx.lineTo(-w, girdle);
+  ctx.closePath();
+  ctx.stroke();
+  star4(ctx, -w * 0.42, top + w * 0.2, w * 0.32, '#ffffff');
+}
+
+/** Radius the face textures are drawn at; they are scaled to each planet. */
 export const FACE_R = 48;
 
 function star4(ctx, x, y, r, color) {

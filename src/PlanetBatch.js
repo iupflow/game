@@ -19,6 +19,7 @@ const iu = new Float32Array(MAX_K);
 const iv = new Float32Array(MAX_K);
 
 const getTint = Phaser.Renderer.WebGL.Utils.getTintAppendFloatAlphaAndSwap; // takes 0xRRGGBB
+const DIM = 0x6a6a6a; // a neon planet flickering
 
 export class PlanetBatch extends Phaser.GameObjects.Image {
   constructor(scene, x, y) {
@@ -34,7 +35,8 @@ export class PlanetBatch extends Phaser.GameObjects.Image {
     renderer.pipelines.preBatch(src);
     for (const p of src.planets) {
       const alpha = camera.alpha * src.alpha * p.alpha;
-      src.drawMesh(pipeline, m, p, p.frame, p.rot, p.r, p.r + PAD, getTint(p.tint, alpha));
+      // a pixel planet's picture stays level with the screen, so its pixels stay square
+      src.drawMesh(pipeline, m, p, p.frame, p.upright ? -src.rotation : p.rot, p.r, p.r + PAD, getTint(p.dim ? DIM : p.tint, alpha));
       // lighting stays put on screen while the planet and the field turn underneath
       if (p.lightFrame) src.drawMesh(pipeline, m, p, p.lightFrame, -src.rotation, p.r, p.r + PAD, getTint(0xffffff, alpha));
     }

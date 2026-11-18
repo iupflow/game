@@ -3,20 +3,32 @@
 // When packaging with Capacitor, replace the three "platform" functions below
 // with real SDK calls (e.g. AdMob / AppLovin MAX and the store billing plugin).
 
+// What the browser keeps between visits. When it keeps nothing (a private window, blocked
+// storage), values are still kept in memory, so diamonds and purchases last the visit.
+const memory = new Map();
 const store = {
   get(key, fallback) {
+    let v = null;
     try {
-      const v = localStorage.getItem(key);
-      return v === null ? fallback : JSON.parse(v);
+      v = localStorage.getItem(key);
+    } catch {
+      /* storage unavailable */
+    }
+    if (v === null && memory.has(key)) v = memory.get(key);
+    if (v === null) return fallback;
+    try {
+      return JSON.parse(v);
     } catch {
       return fallback;
     }
   },
   set(key, value) {
+    const v = JSON.stringify(value);
+    memory.set(key, v);
     try {
-      localStorage.setItem(key, JSON.stringify(value));
+      localStorage.setItem(key, v);
     } catch {
-      /* storage unavailable: keep running without persistence */
+      /* storage unavailable: the copy in memory is used */
     }
   },
 };
@@ -71,6 +83,8 @@ const platform = {
   purchasePremium: async () =>
     window.__TEST_PURCHASE ||
     window.confirm('Premium for $2.99: no ads, every booster at its maximum each game, and a free revive? (test purchase, no charge)'),
+  purchaseGems: async (pack) =>
+    window.__TEST_PURCHASE || window.confirm(`${pack.gems} diamonds for ${pack.price}? (test purchase, no charge)`),
 };
 
 export const Ads = {
@@ -97,6 +111,11 @@ export const Ads = {
   /** Test builds only: undo a test purchase, so the free flow can be tried again. */
   undoTestPurchase() {
     if (typeof window !== 'undefined' && window.__TEST_PURCHASE) store.set('jd_noads', false);
+  },
+
+  /** A pack of diamonds (a consumable purchase). Resolves true when it went through. */
+  async purchaseGems(pack) {
+    return platform.purchaseGems(pack);
   },
 
   /** The one-time Premium purchase. */

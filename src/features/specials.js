@@ -1,4 +1,4 @@
-// Special planets from the launcher: the star bomb and golden planets.
+// Special planets from the launcher: the star bomb.
 // Mixed into GameScene, so `this` is the scene.
 import Phaser from 'phaser';
 import { Sfx } from '../sfx.js';
@@ -8,37 +8,29 @@ import { store } from '../ads.js';
 
 const SPECIAL_FROM = 4; // specials start once an Earth has been made in this game
 const BOMB_CHANCE = 0.03;
-const GOLDEN_CHANCE = 0.06;
 const BOMB_FUSE_MS = 700; // from landing to the blast
 const BOMB_RANGE = 115; // how far the blast clears small planets, in field units
-export const GOLDEN_POINTS = 3; // a merge with a golden planet scores this many times as much
-export const GOLDEN_COINS = 5;
 
 const TIPS = {
   bomb: ['STAR BOMB', 'Blows away the small planets around it'],
-  golden: ['GOLDEN PLANET', 'Merge it for triple points and stardust'],
 };
 
 export const SpecialsMixin = {
-  /** What the launcher gives next: a body of the chain, sometimes golden, now and then a star bomb. */
+  /** What the launcher gives next: a body of the chain, now and then a star bomb. */
   rollNext() {
     const rule = this.rule || {};
     let kind = this.rollTier();
-    let golden = false;
-    if (this.runMax >= SPECIAL_FROM && !this.lastWasSpecial) {
-      if (this.rng() < BOMB_CHANCE * (rule.bomb || 1)) kind = 'bomb';
-      else if (this.rng() < GOLDEN_CHANCE * (rule.golden || 1)) golden = true;
-    }
-    this.lastWasSpecial = typeof kind !== 'number' || golden;
-    return { kind, golden };
+    if (this.runMax >= SPECIAL_FROM && !this.lastWasSpecial && this.rng() < BOMB_CHANCE * (rule.bomb || 1)) kind = 'bomb';
+    this.lastWasSpecial = typeof kind !== 'number';
+    return kind;
   },
 
   /** The first time a special planet is coming, say what it does. */
-  tipSpecial(kind, golden) {
-    const id = golden ? 'golden' : typeof kind === 'number' ? null : kind;
+  tipSpecial(kind) {
+    const id = typeof kind === 'number' ? null : kind;
     if (!id || !TIPS[id] || store.get(`jd3_tip_${id}`, false)) return;
     store.set(`jd3_tip_${id}`, true);
-    this.banner(TIPS[id][0], TIPS[id][1], id === 'golden' ? '#ffd93d' : '#ff9a5a', kind);
+    this.banner(TIPS[id][0], TIPS[id][1], '#ff9a5a', kind);
   },
 
   /** Two planets touch and one of them is special: a bomb arms on its first touch. */
@@ -103,10 +95,7 @@ export const SpecialsMixin = {
         onComplete: () => sp.destroy(),
       });
     }
-    if (n) {
-      this.addScore(n * 5 * this.universe);
-      this.floatText(at.x, at.y - 30, `BOOM ×${n}`, '#ffc27a', 28);
-    }
+    if (n) this.floatText(at.x, at.y - 30, 'BOOM!', '#ffc27a', 28);
     this.cameras.main.shake(130, 0.003);
     Sfx.bomb();
     Haptics.heavy();

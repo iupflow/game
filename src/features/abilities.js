@@ -66,7 +66,6 @@ export const AbilitiesMixin = {
         onComplete: () => img.destroy(),
       });
     });
-    if (near.length) this.addScore(near.length * 4 * this.universe);
     Sfx.ringCatch(near.length);
     Haptics.medium();
   },
@@ -132,7 +131,6 @@ export const AbilitiesMixin = {
         n++;
       }
     }
-    if (n) this.addScore(n * 4 * this.universe);
     this.burstRing(sun, 0xffb347, 1.7);
     Sfx.flare();
     Haptics.medium();
@@ -149,7 +147,6 @@ export const AbilitiesMixin = {
         n++;
       }
     }
-    if (n) this.addScore(n * 6 * this.universe);
     this.shockwave(sn.x, sn.y, sn.r * 3.2, 6);
     this.calmUntil = Math.max(this.calmUntil, this.time.now + 2500);
     this.burstRing(sn, 0xbfe0ff, 2.6);
@@ -182,7 +179,6 @@ export const AbilitiesMixin = {
           const across = Math.abs(ox * uy - oy * ux);
           if (along > h.r * 0.9 && along < h.r * 4.2 && across < p.r * 0.7 + 6) {
             this.poof(p, 0xbff2ff);
-            this.addScore(5 * this.universe);
           }
         }
       }

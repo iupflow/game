@@ -1,64 +1,102 @@
-// The home screen, the shop and the daily challenge, plus stardust (the coin), skins and themes.
+// The home screen, the pause menu, saving and continuing a game, the daily challenge and the
+// shop, plus diamonds (the one currency) and the skin and background in use.
 // Mixed into GameScene, so `this` is the scene.
 import { Sfx } from '../sfx.js';
 import { Haptics } from '../haptics.js';
 import { Meta } from '../meta.js';
 import { Ads, store } from '../ads.js';
-import { SKINS, THEMES, skinById, themeById, applyPageTheme } from '../themes.js';
-import { dailyChallenge, seededRandom } from '../daily.js';
-import { TIERS, HOLE, TEX_SCALE, FACE_R } from '../art.js';
+import { SKINS, THEMES, GEM_PACKS, skinById, themeById, applyPageTheme } from '../themes.js';
+import { dailyChallenge, seededRandom, todayKey } from '../daily.js';
+import { TIERS, HOLE, TEX_SCALE, setArtSkin, wearsSkin, dropSkinTextures, skinPreview, hasKindTextures, makeKindTextures } from '../art.js';
+import { skyPreview } from '../backgrounds.js';
 
 const OVERLAY = 100;
-const UI = 50;
-const COINS_PER_POINTS = 150; // a game pays one stardust for every this many points
+const GEMS = OVERLAY + 5; // the diamond counter stays readable over the menus
+const GEM_X = 48;
+const GEM_Y = 58;
+const SAVE_EVERY_MS = 4000;
+const SAVE_VERSION = 1;
+const SAVED_KINDS = (kind) => typeof kind === 'number' || kind === 'bomb';
+
+/**
+ * Diamonds drop from merges, rarely: the bigger the body made, the better the chance.
+ * About 0.4% for a Mercury, 1.4% for an Earth, 5% for a Saturn, 13% for the Sun and 48% for a
+ * Supernova, so most games find one to three. A black hole always gives BLACK_HOLE_GEMS.
+ */
+export const gemChance = (tier) => Math.min(0.6, 0.0025 * Math.pow(1.55, tier));
+export const BLACK_HOLE_GEMS = 5;
 
 export const MenuMixin = {
-  // ---------- stardust ----------
+  // ---------- diamonds ----------
 
-  buildCoins() {
-    const W = this.W;
-    // stardust: under the score; the daily goal and the current event: under the pause button
-    this.coinIcon = this.add.image(54, 165, 'coin').setScale(0.75 / TEX_SCALE).setDepth(UI + 1);
-    this.coinText = this.text(74, 165, '', 24, '#ffe08a').setOrigin(0, 0.5).setDepth(UI + 1);
-    this.goalText = this.text(W / 2, 112, '', 18, '#ffcf8a').setOrigin(0.5).setDepth(UI + 1).setVisible(false);
-    this.eventLabel = this.text(W / 2, 138, '', 18, '#ffffff').setOrigin(0.5).setDepth(UI + 1).setVisible(false);
-    this.refreshCoins();
+  buildGems() {
+    this.gemsInFlight = 0;
+    this.gemIcon = this.add.image(GEM_X, GEM_Y, 'gem').setScale(0.82 / TEX_SCALE).setDepth(GEMS);
+    this.gemText = this.text(GEM_X + 26, GEM_Y + 1, '', 32).setOrigin(0, 0.5).setDepth(GEMS).setStroke('#150a33', 6);
+    this.refreshGems();
   },
 
-  /** The wallet plus what has been picked up in this game and not banked yet. */
-  refreshCoins(pop = false) {
-    this.coinText.setText((Meta.coins + this.runCoins - this.runCoinsBanked).toLocaleString('en-US'));
+  /** The wallet, less the diamonds still flying to it. */
+  refreshGems(pop = false) {
+    this.gemText.setText(Math.max(0, Meta.gems - this.gemsInFlight).toLocaleString('en-US'));
     if (pop) {
-      this.tweens.add({ targets: this.coinText, scale: { from: 1.3, to: 1 }, duration: 220, ease: 'Back.out' });
-      this.tweens.add({ targets: this.coinIcon, scale: { from: 1.1 / TEX_SCALE, to: 0.75 / TEX_SCALE }, duration: 220, ease: 'Back.out' });
+      this.tweens.add({ targets: this.gemText, scale: { from: 1.3, to: 1 }, duration: 220, ease: 'Back.out' });
+      this.tweens.add({ targets: this.gemIcon, scale: { from: 1.15 / TEX_SCALE, to: 0.82 / TEX_SCALE }, duration: 220, ease: 'Back.out' });
     }
   },
 
-  /** Stardust picked up in a game, floating up from a point on the screen. */
-  gainCoinsAt(n, sx, sy) {
-    this.runCoins += n;
-    this.floatText(sx, sy - 20, `+${n} ✦`, '#ffe08a', 26);
-    this.refreshCoins(true);
-    Sfx.coin();
-  },
-
-  gainCoins(n, fx, fy) {
-    const at = this.toScreen(fx, fy);
-    this.gainCoinsAt(n, at.x, at.y);
-  },
-
   /**
-   * At game over everything earned so far goes into the wallet: what was picked up, plus one
-   * stardust per COINS_PER_POINTS points. After a revive only what is new is added. Returns the
-   * total earned in this game.
+   * Diamonds found at a point on the screen: they go into the wallet at once (nothing is lost if
+   * the game is closed), and a diamond pops out there and flies up to the counter.
    */
-  bankCoins() {
-    const earned = this.runCoins + Math.floor(this.score / COINS_PER_POINTS);
-    Meta.addCoins(earned - this.coinsBanked);
-    this.coinsBanked = earned;
-    this.runCoinsBanked = this.runCoins;
-    this.refreshCoins();
-    return earned;
+  gainGemsAt(n, sx, sy) {
+    if (n <= 0) return;
+    Meta.addGems(n);
+    this.runGems += n;
+    this.gemsInFlight += n;
+    const shown = Math.min(n, 6);
+    for (let i = 0; i < shown; i++) {
+      const share = i < shown - 1 ? 1 : n - (shown - 1);
+      const ox = shown > 1 ? (i - (shown - 1) / 2) * 22 : 0;
+      const gem = this.add.image(sx + ox, sy, 'gem').setDepth(GEMS + 1).setScale(0);
+      this.tweens.add({ targets: gem, scale: 0.95 / TEX_SCALE, y: sy - 26, duration: 260, ease: 'Back.out', delay: i * 60 });
+      this.tweens.add({
+        targets: gem,
+        x: GEM_X,
+        y: GEM_Y,
+        scale: 0.6 / TEX_SCALE,
+        delay: 520 + i * 90,
+        duration: 620,
+        ease: 'Cubic.in',
+        onComplete: () => {
+          gem.destroy();
+          this.gemsInFlight -= share;
+          this.refreshGems(true);
+          Sfx.gemIn();
+        },
+      });
+    }
+    for (let i = 0; i < 6; i++) {
+      const a = (i / 6) * Math.PI * 2;
+      const sp = this.add.image(sx, sy - 20, 'spark').setTint(0xbff6ff).setScale(0.3 / TEX_SCALE).setDepth(GEMS + 1);
+      this.tweens.add({ targets: sp, x: sx + Math.cos(a) * 34, y: sy - 20 + Math.sin(a) * 34, alpha: 0, scale: 0.05 / TEX_SCALE, duration: 420, onComplete: () => sp.destroy() });
+    }
+    const label = this.text(sx, sy - 58, `+${n}`, 26, '#9ff3ff').setOrigin(0.5).setDepth(GEMS + 1).setStroke('#0b2a4a', 6);
+    this.tweens.add({ targets: label, y: sy - 90, alpha: 0, delay: 300, duration: 700, onComplete: () => label.destroy() });
+    this.refreshGems();
+    Sfx.gem();
+    Haptics.light();
+  },
+
+  /** The same, at a point of the field. */
+  gainGems(n, fx, fy) {
+    const at = this.toScreen(fx, fy);
+    this.gainGemsAt(n, at.x, at.y);
+  },
+
+  /** A merge made a body of this tier at (fx, fy): sometimes a diamond drops. */
+  rollGem(tier, fx, fy) {
+    if (Math.random() < gemChance(tier)) this.gainGems(1, fx, fy);
   },
 
   // ---------- looks ----------
@@ -66,14 +104,13 @@ export const MenuMixin = {
   applyLooks() {
     this.skin = skinById(Meta.using('skin'));
     this.theme = themeById(Meta.using('theme'));
+    setArtSkin(this.skin.id);
     applyPageTheme(this.theme);
   },
 
-  /** A planet in the chosen skin: a colour filter, or a face. */
+  /** A planet in the chosen skin: the kawaii skin gives it a face. */
   dress(p) {
-    if (p.tier < 0 || p.tier >= HOLE) return;
-    if (this.skin.tint) p.tint = this.skin.tint;
-    if (this.skin.face) p.addFace();
+    if (this.skin.face && wearsSkin(p.kind)) p.addFace();
   },
 
   // ---------- the game's own controls, hidden on the home screen ----------
@@ -92,6 +129,7 @@ export const MenuMixin = {
   showHome() {
     const W = this.W;
     this.state = 'menu';
+    this.inGame = false;
     this.setGameUi(false);
     if (this.hint) this.hint.setVisible(false);
     const items = (this.homeItems = []);
@@ -103,18 +141,43 @@ export const MenuMixin = {
     const title = add(this.text(W / 2, 300, 'JELLY DROP', 78, '#ffffff').setOrigin(0.5).setStroke('#3a2490', 12));
     this.tweens.add({ targets: title, scale: { from: 1, to: 1.04 }, duration: 1400, yoyo: true, repeat: -1, ease: 'Sine.inOut' });
     add(this.text(W / 2, 374, 'Merge planets. Grow the universe.', 24, '#d6ccff').setOrigin(0.5));
-    add(this.text(W / 2, 430, `BEST  ${this.best.toLocaleString('en-US')}`, 24, '#ffd93d').setOrigin(0.5));
+    // the biggest body ever made, as a little trophy
+    const record = Meta.record;
+    if (record >= 0) {
+      if (!hasKindTextures(this, record)) makeKindTextures(this, record);
+      add(this.portrait(W / 2 - 104, 476, record, 30));
+      add(this.text(W / 2 - 34, 460, 'BIGGEST EVER', 16, '#b9a8e6').setOrigin(0, 0.5));
+      add(this.text(W / 2 - 34, 490, TIERS[record].name, 28).setOrigin(0, 0.5));
+    }
 
-    items.push(this.button(W / 2, 800, 440, 104, '▶  PLAY', 0x37b24d, () => this.startGame('normal'), 42));
+    const saved = this.savedGame();
+    let y;
+    if (saved) {
+      items.push(this.button(W / 2, 770, 440, 104, '▶  CONTINUE', 0x37b24d, () => this.startGame(saved.mode, saved), 42));
+      items.push(this.button(W / 2, 884, 440, 74, 'NEW GAME', 0x4c6ef5, () => this.confirmNewGame('normal'), 28));
+      y = 978;
+    } else {
+      items.push(this.button(W / 2, 800, 440, 104, '▶  PLAY', 0x37b24d, () => this.startGame('normal'), 42));
+      y = 922;
+    }
     const daily = dailyChallenge();
-    const rec = Meta.daily(daily.date);
-    items.push(this.button(W / 2, 924, 440, 84, 'DAILY CHALLENGE', 0xf08c2e, () => this.openDaily(), 30));
-    add(this.text(W / 2, 980, `${daily.rule.name}  ·  ${rec.done ? 'done today ✓' : `+${daily.reward} ✦`}`, 20, rec.done ? '#8ce99a' : '#ffcf8a').setOrigin(0.5));
-    items.push(this.button(W / 2 - 112, 1062, 208, 76, 'SHOP', 0x7a4fd8, () => this.openShop(), 28));
-    items.push(this.button(W / 2 + 112, 1062, 208, 76, 'ALBUM', 0x4c6ef5, () => this.openAlbum(), 28));
+    items.push(this.button(W / 2, y, 440, 80, 'DAILY CHALLENGE', 0xf08c2e, () => this.openDaily(), 28));
+    // a small badge on the button: a dot while today's challenge is open, a tick once it is done
+    const done = Meta.daily(daily.date).done;
+    const badge = add(this.add.container(W / 2 + 206, y - 34));
+    const bg = this.add.graphics();
+    bg.fillStyle(done ? 0x2f9e44 : 0xff4d6d, 1);
+    bg.fillCircle(0, 0, 17);
+    bg.lineStyle(3, 0xffffff, 1);
+    bg.strokeCircle(0, 0, 17);
+    badge.add([bg, this.text(0, 1, done ? '✓' : '!', 22).setOrigin(0.5)]);
+    if (!done) this.tweens.add({ targets: badge, scale: 1.15, duration: 600, yoyo: true, repeat: -1, ease: 'Sine.inOut' });
+    y += 96;
+    items.push(this.button(W / 2 - 112, y, 208, 74, 'SHOP', 0x7a4fd8, () => this.openShop(), 28));
+    items.push(this.button(W / 2 + 112, y, 208, 74, 'ALBUM', 0x4c6ef5, () => this.openAlbum(), 28));
     if (!this.premium) {
       items.push(
-        this.button(W / 2, 1160, 440, 60, 'No Ads + Max Boosters  $2.99', 0x5a3aa8, async () => {
+        this.button(W / 2, y + 92, 440, 58, 'No Ads + Max Boosters  $2.99', 0x5a3aa8, async () => {
           if (this.premium) return;
           if (await Ads.purchasePremium()) {
             this.applyPremium();
@@ -134,13 +197,44 @@ export const MenuMixin = {
     this.homeItems = null;
   },
 
-  /** Leave the home screen and play: a normal game, or today's challenge. */
-  startGame(mode = 'normal') {
+  /** A game left unfinished, if it can still be continued. */
+  savedGame() {
+    const s = Meta.savedGame;
+    return s && s.v === SAVE_VERSION && Array.isArray(s.pieces) ? s : null;
+  },
+
+  /** Starting over while a game is waiting to be continued: ask first. */
+  confirmNewGame(mode) {
+    if (!this.savedGame()) {
+      this.startGame(mode);
+      return;
+    }
+    const W = this.W;
+    const items = this.panel(90, 440, W - 180, 420);
+    const add = (o) => {
+      items.push(o.setDepth(OVERLAY));
+      return o;
+    };
+    const close = () => items.forEach((o) => o.destroy());
+    add(this.text(W / 2, 512, 'START OVER?', 40).setOrigin(0.5));
+    add(this.text(W / 2, 566, 'The game you left will be lost', 22, '#d6ccff').setOrigin(0.5));
+    items.push(
+      this.button(W / 2, 660, 360, 84, mode === 'daily' ? 'PLAY DAILY' : 'NEW GAME', 0x4c6ef5, () => {
+        close();
+        Meta.clearSavedGame();
+        this.startGame(mode);
+      }, 30),
+    );
+    items.push(this.button(W / 2, 764, 360, 72, 'KEEP IT', 0x37b24d, close, 26));
+  },
+
+  /** Leave the home screen and play: a normal game or today's challenge, new or continued. */
+  startGame(mode = 'normal', saved = null) {
     this.closeHome();
     this.setGameUi(true);
     this.mode = mode;
     if (mode === 'daily') {
-      this.daily = dailyChallenge();
+      this.daily = dailyChallenge(saved ? saved.daily : todayKey());
       this.rule = this.daily.rule;
       this.rng = seededRandom(this.daily.seed);
     } else {
@@ -152,22 +246,112 @@ export const MenuMixin = {
     this.gravityMul = rule.gravity || 1;
     this.spinMul = rule.spin || 1;
     this.ringScale = rule.ringScale || 1;
-    this.ringR = this.ringTarget();
     if (rule.noBoosters) {
       for (const b of Object.values(this.boost)) {
         b.left = 0;
         b.got = 99; // and no ads for them either
       }
     }
-    this.refreshBoosters();
     this.dailyReached = false;
-    this.refreshGoal();
     this.resetEvents();
-    const next = this.rollNext();
-    this.nextKind = next.kind;
-    this.nextGolden = next.golden;
-    this.prepareHeld();
+    this.inGame = true;
+    if (saved) this.restoreGame(saved);
+    else {
+      Meta.clearSavedGame(); // a new game replaces anything left over
+      this.ringR = this.ringTarget();
+      this.nextKind = this.rollNext();
+      this.prepareHeld();
+    }
+    this.refreshBoosters();
+    this.refreshGoal();
+    this.saveAt = this.time.now + SAVE_EVERY_MS;
     if (this.hint) this.hint.setVisible(true);
+  },
+
+  // ---------- saving and continuing ----------
+
+  /**
+   * Keeps the game in progress, so it can be continued after going home or closing the app.
+   * Called every few seconds, when the app goes to the background and when leaving to the home
+   * screen. Losing ends a game for good: its save is gone the moment it is lost.
+   */
+  saveGame() {
+    if (!this.inGame || this.hole || this.state === 'crunch' || this.state === 'over' || this.state === 'busy') return;
+    const r1 = (v) => Math.round(v * 10) / 10;
+    const r2 = (v) => Math.round(v * 100) / 100;
+    const pieces = [];
+    for (const p of this.pieces) {
+      if (!p.body || !SAVED_KINDS(p.kind)) continue;
+      const v = p.body.velocity;
+      pieces.push([p.kind, r1(p.x), r1(p.y), r2(v.x), r2(v.y)]);
+    }
+    const boost = {};
+    for (const [k, b] of Object.entries(this.boost)) boost[k] = [b.left, b.got];
+    Meta.saveGame({
+      v: SAVE_VERSION,
+      mode: this.mode,
+      daily: this.daily ? this.daily.date : null,
+      rng: this.rng.getState ? this.rng.getState() : null,
+      pieces,
+      held: this.held ? this.held.kind : null,
+      next: this.nextKind,
+      runMax: this.runMax,
+      universe: this.universe,
+      universeMax: this.universeMax,
+      biggest: this.biggest,
+      reviveRing: this.reviveRing,
+      revived: this.revived,
+      boost,
+      worldRot: r2(this.worldRot),
+      playMs: Math.round(this.playMs),
+      nextEventAt: Math.round(this.nextEventAt),
+      runGems: this.runGems,
+      newRecord: this.newRecord,
+      dailyReached: this.dailyReached,
+      lastWasSpecial: this.lastWasSpecial,
+    });
+  },
+
+  /** Puts a saved game back exactly as it was left (moving planets keep moving). */
+  restoreGame(s) {
+    if (s.rng != null && this.rng.setState) this.rng.setState(s.rng);
+    this.runMax = s.runMax;
+    this.universe = s.universe || 1;
+    this.universeMax = s.universeMax || 0;
+    this.biggest = s.biggest || 0;
+    this.reviveRing = s.reviveRing || 0;
+    this.revived = !!s.revived;
+    for (const [k, [left, got]] of Object.entries(s.boost || {})) {
+      if (this.boost[k]) Object.assign(this.boost[k], { left, got });
+    }
+    if (this.premium) this.applyPremium(); // bought since: top every booster up
+    this.worldRot = s.worldRot || 0;
+    this.playMs = s.playMs || 0;
+    if (s.nextEventAt) this.nextEventAt = s.nextEventAt;
+    this.runGems = s.runGems || 0;
+    this.newRecord = !!s.newRecord;
+    this.dailyReached = !!s.dailyReached;
+    this.lastWasSpecial = !!s.lastWasSpecial;
+    this.ringR = this.ringTarget();
+    this.restoring = true; // no discoveries, ring growth or goals while the field is put back
+    for (const [kind, x, y, vx, vy] of s.pieces) {
+      const p = this.spawnPiece(x, y, kind);
+      this.matter.body.setVelocity(p.body, { x: vx, y: vy });
+      p.born = -1e9;
+      p.pop = 1;
+      p.pv = 0;
+    }
+    this.restoring = false;
+    this.calmUntil = this.time.now + 2000; // a moment to look before any countdown can start
+    this.refreshUniverse();
+    this.nextKind = s.next;
+    if (s.held !== null && s.held !== undefined) {
+      this.setHeld(s.held);
+      this.refreshNext();
+      this.state = 'aim';
+    } else {
+      this.prepareHeld();
+    }
   },
 
   // ---------- pause ----------
@@ -207,14 +391,20 @@ export const MenuMixin = {
     toggle(W / 2 + 104, 'VIBRATION', 'jd3_vibe', (on) => Haptics.setEnabled(on));
   },
 
-  /** Leave a game from the pause menu: what was earned is kept; then a new game, or home. */
+  /** From the pause menu: HOME keeps the game to continue later; RESTART starts a new one. */
   async leaveGame(again) {
     if (this.state !== 'paused') return;
+    if (again) {
+      this.state = 'busy';
+      Meta.clearSavedGame();
+      await Ads.betweenGames();
+      this.scene.restart({ play: true, mode: this.mode });
+      return;
+    }
+    this.saveGame();
+    this.inGame = false;
     this.state = 'busy';
-    this.bankCoins();
-    this.saveDailyBest();
-    await Ads.betweenGames();
-    this.scene.restart(again ? { play: true, mode: this.mode } : {});
+    this.scene.restart({});
   },
 
   // ---------- the daily challenge ----------
@@ -233,27 +423,21 @@ export const MenuMixin = {
   checkDailyGoal(tier) {
     if (this.mode !== 'daily' || this.dailyReached || tier < this.daily.goal || tier >= HOLE) return;
     this.dailyReached = true;
-    const rec = Meta.daily(this.daily.date);
-    if (!rec.done) {
-      rec.done = true;
-      Meta.saveDaily(rec);
-      this.gainCoinsAt(this.daily.reward, this.W / 2, 240);
-      this.banner('DAILY COMPLETE!', `+${this.daily.reward} stardust`, '#ffd93d');
-      Haptics.success();
+    if (this.daily.date !== todayKey()) {
+      this.banner('GOAL REACHED', 'That day’s challenge is over', '#8ce99a');
     } else {
-      this.banner('DAILY GOAL REACHED', "Today's reward is already yours", '#8ce99a');
+      const rec = Meta.daily(this.daily.date);
+      if (!rec.done) {
+        rec.done = true;
+        Meta.saveDaily(rec);
+        this.gainGemsAt(this.daily.reward, this.W / 2, 330);
+        this.banner('DAILY COMPLETE!', `+${this.daily.reward} diamonds`, '#9ff3ff');
+        Haptics.success();
+      } else {
+        this.banner('DAILY GOAL REACHED', "Today's reward is already yours", '#8ce99a');
+      }
     }
     this.refreshGoal();
-  },
-
-  /** At game over: today's best score in the challenge. */
-  saveDailyBest() {
-    if (this.mode !== 'daily') return;
-    const rec = Meta.daily(this.daily.date);
-    if (this.score > rec.best) {
-      rec.best = this.score;
-      Meta.saveDaily(rec);
-    }
   },
 
   openDaily() {
@@ -274,13 +458,16 @@ export const MenuMixin = {
     const goal = this.seen.includes(g) ? `Make a ${TIERS[g].name}` : `Reach body no. ${g + 1} of the chain`;
     add(this.text(W / 2, 572, `Goal: ${goal}`, 24).setOrigin(0.5));
     add(this.text(W / 2, 618, 'Same planets, same order for everyone today', 18, '#9f8fd0').setOrigin(0.5));
-    add(
-      this.text(W / 2, 668, rec.done ? `Done today ✓   ·   best ${rec.best.toLocaleString('en-US')}` : `Reward: +${daily.reward} ✦ stardust`, 24, rec.done ? '#8ce99a' : '#ffe08a').setOrigin(0.5),
-    );
+    if (rec.done) {
+      add(this.text(W / 2, 672, 'Done today ✓', 26, '#8ce99a').setOrigin(0.5));
+    } else {
+      const label = add(this.text(W / 2 + 18, 672, `Reward: ${daily.reward}`, 26, '#9ff3ff').setOrigin(0.5));
+      add(this.add.image(label.x + label.width / 2 + 22, 672, 'gem').setScale(0.6 / TEX_SCALE));
+    }
     items.push(
       this.button(W / 2, 780, 400, 96, '▶  PLAY', 0xf08c2e, () => {
         close();
-        this.startGame('daily');
+        this.confirmNewGame('daily');
       }, 38),
     );
     items.push(this.button(W / 2, 892, 260, 68, 'CLOSE', 0x4c6ef5, close, 26));
@@ -288,81 +475,158 @@ export const MenuMixin = {
 
   // ---------- the shop ----------
 
-  openShop() {
+  /** tab: 'skin' (planets), 'theme' (backgrounds) or 'gems' (diamond packs). */
+  openShop(tab = 'skin') {
     const W = this.W;
-    const items = this.panel(40, 150, W - 80, 980);
+    const items = this.panel(28, 132, W - 56, 1030);
     const add = (o) => {
       items.push(o.setDepth(OVERLAY));
       return o;
     };
-    const close = () => items.forEach((o) => o.destroy());
-    const reopen = () => {
-      close();
-      this.openShop();
+    const close = () => {
+      items.forEach((o) => o.destroy());
+      this.previewJobs = [];
     };
-    add(this.text(W / 2, 208, 'SHOP', 44).setOrigin(0.5));
-    add(this.add.image(W / 2 - 40, 262, 'coin').setScale(0.85 / TEX_SCALE));
-    add(this.text(W / 2 - 18, 262, Meta.coins.toLocaleString('en-US'), 28, '#ffe08a').setOrigin(0, 0.5));
+    const reopen = (t = tab) => {
+      close();
+      this.openShop(t);
+    };
+    add(this.text(W / 2, 186, 'SHOP', 42).setOrigin(0.5));
+    const tabs = [['skin', 'PLANETS'], ['theme', 'SKIES'], ['gems', 'DIAMONDS']];
+    const tabBtns = {};
+    tabs.forEach(([id, label], i) => {
+      const b = this.button(W / 2 + (i - 1) * 210, 256, 198, 62, label, id === tab ? 0x7a4fd8 : 0x33246e, () => id !== tab && reopen(id), 22);
+      if (id !== tab) b.label.setAlpha(0.7);
+      tabBtns[id] = b;
+      items.push(b);
+    });
+    const ctx = { items, add, close, reopen, tabBtns };
+    if (tab === 'gems') this.shopGems(ctx);
+    else this.shopLooks(tab, ctx);
+    items.push(this.button(W / 2, 1090, 260, 66, 'CLOSE', 0x4c6ef5, close, 26));
+  },
 
-    const card = (type, def, x, y, drawPreview) => {
+  /** A row in the shop: a card with a picture on the left, a name, a line about it and a button. */
+  shopRow(ctx, y, h, highlight) {
+    const W = this.W;
+    const g = ctx.add(this.add.graphics());
+    g.fillStyle(highlight ? 0x3d2a85 : 0x1b0e3d, 1);
+    g.fillRoundedRect(48, y - h / 2, W - 96, h, 20);
+    if (highlight) {
+      g.lineStyle(3, 0x8ce99a, 1);
+      g.strokeRoundedRect(48, y - h / 2, W - 96, h, 20);
+    }
+  },
+
+  /** A buy button showing a diamond and the price. */
+  priceButton(x, y, price, onTap) {
+    const b = this.button(x, y, 132, 56, String(price), 0x1f8fd6, onTap, 24);
+    b.label.x = 14;
+    b.add(this.add.image(-34, 0, 'gem').setScale(0.55 / TEX_SCALE));
+    return b;
+  },
+
+  shopLooks(type, ctx) {
+    const W = this.W;
+    const list = type === 'skin' ? SKINS : THEMES;
+    const top = 352;
+    const rowH = 132;
+    this.previewJobs = [];
+    list.forEach((def, i) => {
+      const y = top + i * (rowH + 12);
       const owned = Meta.owns(type, def.id);
       const inUse = Meta.using(type) === def.id;
-      const bg = add(this.add.graphics());
-      bg.fillStyle(inUse ? 0x3d2a85 : 0x1b0e3d, 1);
-      bg.fillRoundedRect(x - 68, y - 100, 136, 214, 22);
-      if (inUse) {
-        bg.lineStyle(4, 0x8ce99a, 1);
-        bg.strokeRoundedRect(x - 68, y - 100, 136, 214, 22);
+      this.shopRow(ctx, y, rowH, inUse);
+      if (type === 'skin') {
+        // two bodies in the skin: a planet and a ringed one; drawn a moment later, one by one
+        [[4, 92, 26], [7, 178, 20]].forEach(([kind, x, R]) => {
+          const pic = ctx.add(this.add.image(x, y, 'dot').setVisible(false));
+          this.previewJobs.push(() => {
+            if (!pic.active) return;
+            pic.setTexture(skinPreview(this, def.id, kind, R)).setScale(1 / TEX_SCALE).setVisible(true);
+          });
+        });
+      } else {
+        const key = skyPreview(this, def, 150, 100);
+        ctx.add(this.add.image(130, y, key).setScale(1 / TEX_SCALE));
+        const frame = ctx.add(this.add.graphics());
+        frame.lineStyle(2, 0xffffff, 0.35);
+        frame.strokeRoundedRect(55, y - 50, 150, 100, 10);
       }
-      drawPreview(x, y - 38);
-      add(this.text(x, y + 30, def.name, 17).setOrigin(0.5));
-      const label = inUse ? 'IN USE' : owned ? 'USE' : `✦ ${def.price}`;
-      const color = inUse ? 0x2f9e44 : owned ? 0x4c6ef5 : 0xe0a020;
-      items.push(
-        this.button(x, y + 78, 118, 46, label, color, () => {
-          if (inUse) return;
-          if (!owned) {
-            if (!Meta.spend(def.price)) {
-              this.floatText(x, y - 40, 'Not enough stardust', '#ff9fb2', 22);
+      ctx.add(this.text(234, y - 30, def.name, 26).setOrigin(0, 0.5));
+      ctx.add(this.text(234, y + 16, def.text, 16, '#c9bdf0').setOrigin(0, 0.5).setWordWrapWidth(272));
+      const bx = W - 128;
+      if (inUse) {
+        const b = this.button(bx, y, 132, 56, 'IN USE', 0x2f9e44, () => {}, 20);
+        ctx.items.push(b);
+      } else if (owned) {
+        ctx.items.push(this.button(bx, y, 132, 56, 'USE', 0x4c6ef5, () => this.useLook(type, def.id), 22));
+      } else {
+        ctx.items.push(
+          this.priceButton(bx, y, def.price, () => {
+            if (!Meta.spendGems(def.price)) {
+              this.floatText(bx - 40, y - 46, 'Not enough diamonds', '#ff9fb2', 22);
               Sfx.bonk();
+              this.tweens.add({ targets: ctx.tabBtns.gems, scale: { from: 1.15, to: 1 }, duration: 400, ease: 'Back.out' });
               return;
             }
             Meta.own(type, def.id);
             Sfx.unlock();
             Haptics.success();
-          }
-          Meta.use(type, def.id);
-          this.applyLooks();
-          if (type === 'theme') this.drawBackground();
-          this.refreshCoins();
-          reopen();
-        }, 20),
-      );
-    };
+            this.useLook(type, def.id);
+          }),
+        );
+      }
+    });
+    // the skin pictures are drawn one at a time, so opening the shop never stalls
+    if (this.previewJobs.length) {
+      this.time.addEvent({
+        delay: 30,
+        repeat: this.previewJobs.length - 1,
+        callback: () => {
+          const job = this.previewJobs && this.previewJobs.shift();
+          if (job) job();
+        },
+      });
+    }
+  },
 
-    add(this.text(W / 2, 330, 'PLANETS', 24, '#cfc4ff').setOrigin(0.5));
-    SKINS.forEach((skin, i) => {
-      card('skin', skin, W / 2 + (i - 1.5) * 150, 470, (x, y) => {
-        const pic = add(this.portrait(x, y, 4, 40));
-        if (skin.tint) pic.setTint(skin.tint);
-        if (skin.face) add(this.add.image(x, y, 'face_happy').setScale((40 * 1.04) / FACE_R / TEX_SCALE));
-      });
+  /** Wear a skin or background: the scene starts again in it, with the shop still open. */
+  useLook(type, id) {
+    const oldSkin = this.skin.id;
+    Meta.use(type, id);
+    this.applyLooks();
+    if (type === 'skin' && oldSkin !== this.skin.id) dropSkinTextures(this, oldSkin);
+    this.scene.restart({ shop: type });
+  },
+
+  shopGems(ctx) {
+    const W = this.W;
+    ctx.add(this.add.image(W / 2 - 70, 352, 'gem').setScale(1.3 / TEX_SCALE));
+    const balance = ctx.add(this.text(W / 2 - 34, 354, Meta.gems.toLocaleString('en-US'), 44, '#9ff3ff').setOrigin(0, 0.5));
+    GEM_PACKS.forEach((pack, i) => {
+      const y = 492 + i * 150;
+      this.shopRow(ctx, y, 134, false);
+      // a little heap of diamonds, bigger for bigger packs
+      const heap = [[0, 0]].concat(i >= 1 ? [[-22, 14], [22, 14]] : []).concat(i >= 2 ? [[-12, -14], [14, -16], [0, 22]] : []);
+      heap.forEach(([dx, dy]) => ctx.add(this.add.image(126 + dx, y + dy, 'gem').setScale((i ? 0.85 : 1.1) / TEX_SCALE)));
+      ctx.add(this.text(220, y - 22, `${pack.gems} diamonds`, 28).setOrigin(0, 0.5));
+      if (pack.bonus) ctx.add(this.text(220, y + 18, `${pack.bonus} extra`, 20, '#8ce99a').setOrigin(0, 0.5));
+      ctx.items.push(
+        this.button(W - 128, y, 150, 60, pack.price, 0x37b24d, async () => {
+          const ok = await Ads.purchaseGems(pack);
+          if (!ok || !balance.active) return;
+          this.gainGemsAt(pack.gems, W - 128, y);
+          balance.setText(Meta.gems.toLocaleString('en-US'));
+          this.tweens.add({ targets: balance, scale: { from: 1.25, to: 1 }, duration: 300, ease: 'Back.out' });
+          Haptics.success();
+        }, 24),
+      );
     });
-    add(this.text(W / 2, 640, 'BACKGROUNDS', 24, '#cfc4ff').setOrigin(0.5));
-    THEMES.forEach((theme, i) => {
-      card('theme', theme, W / 2 + (i - 1.5) * 150, 780, (x, y) => {
-        const g = add(this.add.graphics());
-        g.fillGradientStyle(theme.top, theme.top, theme.bottom, theme.bottom, 1);
-        g.fillRect(x - 54, y - 36, 108, 72);
-        theme.glows.forEach((c, k) => {
-          g.fillStyle(c, 0.45);
-          g.fillCircle(x - 30 + k * 30, y - 8 + (k % 2) * 16, 14);
-        });
-        g.fillStyle(0xffffff, 0.8);
-        for (let k = 0; k < 7; k++) g.fillCircle(x - 48 + ((k * 37) % 96), y - 30 + ((k * 23) % 60), 1.2);
-      });
-    });
-    add(this.text(W / 2, 948, 'Earn stardust by playing: every game, golden planets, golden comets', 18, '#9f8fd0').setOrigin(0.5));
-    items.push(this.button(W / 2, 1040, 260, 68, 'CLOSE', 0x4c6ef5, close, 26));
+    ctx.add(
+      this.text(W / 2, 948, 'Diamonds also drop now and then when planets merge.\nThe bigger the planet, the better the chance.', 19, '#b9a8e6')
+        .setOrigin(0.5)
+        .setAlign('center'),
+    );
   },
 };

@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { TEX_SCALE, FACE_R, defOf, surfaceKey, lightKey, partKey, partInfo, hasKindTextures, makeKindTextures } from './art.js';
+import { TEX_SCALE, FACE_R, defOf, surfaceKey, lightKey, partKey, partInfo, hasKindTextures, makeKindTextures, partsOf, hasLight, wearsSkin } from './art.js';
 
 // A planet is a soft body in two senses:
 //  - physics: a hard core (CORE of the radius) wrapped in a springy skin, so planets
@@ -84,16 +84,24 @@ export class Planet {
     this.captured = 0;
 
     this.frame = scene.textures.getFrame(surfaceKey(kind));
-    this.lightFrame = this.def.light ? scene.textures.getFrame(lightKey(kind)) : null;
+    this.lightFrame = hasLight(kind) ? scene.textures.getFrame(lightKey(kind)) : null;
     this.tint = 0xffffff; // multiplies the surface colour, e.g. when a planet heats up
-    this.parts = this.def.parts.map(([name, front], i) => {
+    // how the skin in use moves: squish (wobble strength), upright (the picture never turns),
+    // hop (a little bounce now and then at rest), flicker (dims for a moment, like a neon tube)
+    const look = (wearsSkin(kind) && scene.skin) || {};
+    this.squish = look.squish || 1;
+    this.upright = !!look.upright;
+    this.hopAt = look.hop ? scene.time.now + 1500 + Math.random() * 4000 : Infinity;
+    this.flickerAt = look.flicker ? scene.time.now + 2000 + Math.random() * 8000 : Infinity;
+    this.dim = false;
+    this.parts = partsOf(kind).map(([name, front], i) => {
       const info = partInfo(name);
       const img = scene.add.image(0, 0, partKey(kind, i));
       if (info.blend === 'add') img.setBlendMode(Phaser.BlendModes.ADD);
       (front ? scene.frontLayer : scene.backLayer).add(img);
       return { img, spin: info.spin };
     });
-    this.overlays = []; // pictures drawn over the planet: a face, a golden shine
+    this.overlays = []; // pictures drawn over the planet: a face
     this.face = null;
     this.blinkAt = scene.time.now + 1500 + Math.random() * 4000;
     this.place(scene.time.now);
@@ -113,16 +121,9 @@ export class Planet {
     return o;
   }
 
-  /** A cute face that blinks now and then and looks surprised when squashed (the face skin). */
+  /** A cute face that blinks now and then and looks surprised when squashed (the kawaii skin). */
   addFace() {
     this.face = this.addOverlay('face_happy');
-  }
-
-  /** A golden planet: a warm tint and a twinkling shine. Merging it pays extra. */
-  makeGolden() {
-    this.golden = true;
-    this.tint = 0xffdf7a;
-    this.addOverlay('goldShine', { add: true, upright: false, spin: 0.0009 });
   }
 
   get rv() {
@@ -157,6 +158,7 @@ export class Planet {
 
   /** Kick the squash spring along the given direction; it then wobbles. */
   impulse(angle, amount) {
+    amount *= this.squish;
     this.qvx += amount * Math.cos(2 * angle);
     this.qvy += amount * Math.sin(2 * angle);
   }
@@ -172,6 +174,22 @@ export class Planet {
 
   update(dtMs, now) {
     const dt = Math.min(dtMs, 34) / 16.667;
+
+    if (now > this.hopAt) {
+      // a little bounce at rest: it swells and squashes, then settles
+      this.hopAt = now + 2500 + Math.random() * 4500;
+      if (this.body && !this.flying) {
+        this.pv += 0.04;
+        this.impulse(Math.PI / 2, 0.05);
+      }
+    }
+    if (now > this.flickerAt) {
+      this.dim = true;
+      if (now > this.flickerAt + 70 + Math.random() * 60) {
+        this.dim = false;
+        this.flickerAt = now + (Math.random() < 0.3 ? 120 : 3000 + Math.random() * 9000);
+      }
+    }
 
     this.qvx += (-0.17 * this.qx - 0.13 * this.qvx) * dt;
     this.qvy += (-0.17 * this.qy - 0.13 * this.qvy) * dt;

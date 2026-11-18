@@ -1,28 +1,30 @@
-// Progress that lasts between games: stardust (the coin), what has been bought in the shop,
-// what is in use, and today's daily challenge.
+// Progress that lasts between games: diamonds, what has been bought in the shop and what is in
+// use, the biggest body ever made, today's daily challenge, and a game left unfinished.
 import { store } from './ads.js';
 
 const KEYS = {
-  coins: 'jd3_coins',
+  gems: 'jd3_gems',
   owned: (type) => `jd3_owned_${type}`,
   using: (type) => `jd3_using_${type}`,
+  record: 'jd3_record',
   daily: 'jd3_daily',
+  save: 'jd3_save',
 };
 const FREE = { skin: 'classic', theme: 'nebula' };
 
 export const Meta = {
-  get coins() {
-    return store.get(KEYS.coins, 0);
+  get gems() {
+    return store.get(KEYS.gems, 0);
   },
 
-  addCoins(n) {
-    if (n > 0) store.set(KEYS.coins, this.coins + Math.round(n));
+  addGems(n) {
+    if (n > 0) store.set(KEYS.gems, this.gems + Math.round(n));
   },
 
-  /** Spends stardust; false (and nothing spent) if there is not enough. */
-  spend(n) {
-    if (this.coins < n) return false;
-    store.set(KEYS.coins, this.coins - n);
+  /** Spends diamonds; false (and nothing spent) if there are not enough. */
+  spendGems(n) {
+    if (this.gems < n) return false;
+    store.set(KEYS.gems, this.gems - n);
     return true;
   },
 
@@ -44,13 +46,35 @@ export const Meta = {
     store.set(KEYS.using(type), id);
   },
 
-  /** Today's daily challenge record: whether it has been completed, and the best score. */
+  /** The biggest body ever made, in any game (-1 before the first merge). */
+  get record() {
+    return store.get(KEYS.record, -1);
+  },
+
+  noteRecord(tier) {
+    if (tier > this.record) store.set(KEYS.record, tier);
+  },
+
+  /** Today's daily challenge record: whether it has been completed. */
   daily(dateKey) {
     const d = store.get(KEYS.daily, null);
-    return d && d.date === dateKey ? d : { date: dateKey, done: false, best: 0 };
+    return d && d.date === dateKey ? d : { date: dateKey, done: false };
   },
 
   saveDaily(record) {
     store.set(KEYS.daily, record);
+  },
+
+  /** A game left unfinished (from the pause menu, or by closing the app), to continue later. */
+  get savedGame() {
+    return store.get(KEYS.save, null);
+  },
+
+  saveGame(state) {
+    store.set(KEYS.save, state);
+  },
+
+  clearSavedGame() {
+    store.set(KEYS.save, null);
   },
 };

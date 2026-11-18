@@ -439,10 +439,15 @@ export const Sfx = {
     tone({ f: 300, f2: 900, dur: 0.6, gain: 0.04, type: 'sawtooth', wet: 0.3, filter: { type: 'lowpass', f: 2200 } });
   },
 
-  /** Stardust picked up. */
-  coin() {
-    tone({ f: note(19), dur: 0.08, gain: 0.06, type: 'triangle', wet: 0.2 });
-    tone({ f: note(23), dur: 0.16, gain: 0.06, type: 'triangle', delay: 0.07, wet: 0.3 });
+  /** A diamond turns up: a bright, glassy little chime. */
+  gem() {
+    bell({ f: note(24), dur: 0.5, gain: 0.05 });
+    bell({ f: note(28), dur: 0.7, gain: 0.045, delay: 0.07 });
+    tone({ f: note(31), dur: 0.25, gain: 0.025, type: 'sine', delay: 0.14, wet: 0.5 });
+  },
+  /** It lands in the counter: a soft tick. */
+  gemIn() {
+    tone({ f: note(26), dur: 0.07, gain: 0.04, type: 'triangle', wet: 0.2 });
   },
 
   /** A cosmic event begins. */

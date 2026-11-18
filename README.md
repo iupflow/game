@@ -10,14 +10,16 @@ the length of the pull sets how hard it is launched toward the centre. Full powe
 always reachable before the finger meets the edge of the screen. Two of the
 same kind merge into the next body in a 15-step chain: Moon, Mercury, Mars, Venus, Earth,
 Neptune, Uranus, Saturn, Jupiter, Sun, Red Giant, Blue Giant, Supernova, Pulsar. Two pulsars
-collapse into a black hole, which swallows the whole field and starts a new universe with a
-higher score multiplier.
+collapse into a black hole, which swallows the whole field, leaves diamonds behind and starts
+a new universe.
 
-The game opens on a home screen: Play, the Daily Challenge, the Shop and the Album. Along
-the way the launcher sometimes gives special planets, some bodies have powers when they are
-made, cosmic events shake things up every so often, and stardust earned in play buys planet
-skins and backgrounds. The pause button (top, middle) leads to resume, restart, home and the
-sound and vibration settings; leaving the app pauses the game too.
+There is no score: it is a relaxed game about growing the biggest body you can. The game opens
+on a home screen: Play (or Continue, when a game was left unfinished), the Daily Challenge, the
+Shop and the Album, with the biggest body ever made shown as a little trophy. Along the way the
+launcher sometimes gives a star bomb, some bodies have powers when they are made, cosmic events
+shake things up every so often, and diamonds buy planet skins and backgrounds. The pause button
+(top, middle) leads to resume, restart, home and the sound and vibration settings; leaving the
+app pauses the game too.
 
 Boosters only ever come from their per-game allowance: no event, special planet or reward
 hands out extra ones, so the allowance stays a real limit.
@@ -36,19 +38,22 @@ The iOS and Android apps are built with Capacitor; see [BUILD.md](BUILD.md).
 
 - `src/GameScene.js` – gameplay: radial gravity, launching, merging, boosters, the
   black hole sequence, album, game over
-- `src/features/` – mixed into the scene: `specials.js` (star bomb, golden planets),
-  `abilities.js` (planet powers), `events.js` (cosmic events), `menu.js` (home screen,
-  pause menu, shop, daily challenge, stardust)
-- `src/meta.js` – what lasts between games: stardust, purchases, today's challenge;
-  `src/themes.js` – skins and backgrounds; `src/daily.js` – the seeded daily challenge
+- `src/features/` – mixed into the scene: `specials.js` (star bomb), `abilities.js` (planet
+  powers), `events.js` (cosmic events), `menu.js` (home screen, pause menu, saving and
+  continuing, shop, daily challenge, diamonds), `skinfx.js` (each skin's merge burst and trail)
+- `src/meta.js` – what lasts between games: diamonds, purchases, the biggest body ever made,
+  today's challenge and the game left unfinished; `src/themes.js` – the skins, backgrounds and
+  diamond packs on sale; `src/backgrounds.js` – the moving skies; `src/daily.js` – the seeded
+  daily challenge
 - `src/Planet.js` – one planet: a hard physics core wrapped in a springy skin, plus
   the springs that make its picture squash, stretch and wobble
 - `src/PlanetBatch.js` – draws planets as deforming textured meshes (WebGL)
 - `src/art.js` – the chain and all procedural art (no image files). Planet surfaces are
   rendered per pixel as softly textured spheres in a gentle, stylised palette; a separate
   light layer adds a rim glow and a glossy highlight (no dark side) and stays fixed while
-  planets turn. The small bodies are textured before the first frame, the big ones in the
-  background
+  planets turn. Each skin has its own surfaces, light layer and parts, keyed by skin, so only
+  the skin in use is ever made. The small bodies are textured before the first frame, the
+  big ones in the background
 - `src/ads.js` – ad and purchase layer. Uses placeholder overlays in the browser;
   replace the `platform` functions with real SDK calls for the store build
 - `src/haptics.js` – vibration (Capacitor Haptics in the apps, browser fallbacks)
@@ -129,14 +134,10 @@ The iOS and Android apps are built with Capacitor; see [BUILD.md](BUILD.md).
 
 ## Special planets
 
-Once an Earth has been made, the launcher sometimes gives something special (shown in NEXT,
-explained the first time each one comes):
-
-- Star Bomb (about 3%): arms when it lands, flashes faster and faster, then blows away the
-  small planets around it (up to Mars, or one step above the smallest the launcher gives)
-  and pushes the rest back. A blast sets off other bombs
-- Golden planets (about 6%): an ordinary planet with a golden shine. A merge with one scores
-  triple and pays 5 stardust
+Once an Earth has been made, the launcher sometimes gives a Star Bomb (about 3%, shown in NEXT
+and explained the first time it comes): it arms when it lands, flashes faster and faster, then
+blows away the small planets around it (up to Mars, or one step above the smallest the launcher
+gives) and pushes the rest back. A blast sets off other bombs.
 
 ## Planet powers
 
@@ -158,19 +159,64 @@ none of them gives boosters:
 - Meteor Shower (11 s): small planets streak in from outside the ring
 - Zero Gravity (7.5 s): everything drifts apart and floats for 5 seconds, then gravity comes
   back hard and slams the field together in a new order. No countdown runs meanwhile
-- Star Rush (12 s): every merge scores double
-- Golden Comet: it crosses the top of the screen; tap it for 20 stardust
 
-## Stardust, the shop and the daily challenge
+Merges in quick succession get a cheer (NICE!, GREAT!, AMAZING!, STELLAR!), nothing more.
 
-- Stardust is earned by playing: one for every 150 points at the end of a game (or when it
-  is left from the pause menu), plus golden planets, golden comets and the daily reward
-- The shop sells planet skins (Cute Faces with blinking eyes, Frost, Royal Gold) and
-  backgrounds (Aurora, Crimson, Deep Ocean); the page around the game follows the background
-- The daily challenge gives everyone the same planets in the same order (the launcher runs
-  on a seed made from the date), plus a rule for the day (low gravity, golden day, meteor
-  day, a ring 8% smaller, no boosters but more bombs, a faster-turning field, zero-G day)
-  and a goal body. Reaching it the first time that day pays 150–200 stardust
+## Diamonds
+
+Diamonds are the one currency, and they are meant to be rare. They come from two places:
+
+- Merges: any merge can drop one, and the bigger the body it makes, the better the chance:
+  about 0.4% for a Mercury, 1.4% for an Earth, 5% for a Saturn, 13% for the Sun and 48% for a
+  Supernova (at most 60%). Most games find one to three. A black hole always leaves 5. The
+  diamond pops out where it was found and flies to the counter at the top left; it is in the
+  wallet at once, so closing the game never loses it. The daily challenge pays 3–5 more
+- Diamond packs in the shop: 60 for $0.99, 330 for $4.99, 700 for $9.99 (placeholder prices;
+  in the browser a test purchase, free)
+
+## The shop
+
+Three tabs: Planets, Skies and Diamonds. A skin or a sky is bought once with diamonds and can
+be switched any time after.
+
+Planet skins change the look of the whole chain, Moon to Pulsar (the black hole and the star
+bomb keep their own), how the planets move, what a merge looks like and the trail a launched
+planet leaves:
+
+| Skin | Price | Planets | Merge | Trail |
+| ---- | ----- | ------- | ----- | ----- |
+| Classic | free | soft painted planets | a glow, a fine ring, sparks; rays for stars | – |
+| Kawaii | 120 | milky pastels with sparkles, a soft outline and a big toy shine, faces that blink and look startled; extra squishy, little hops at rest | hearts pop out and float up | little hearts |
+| Jelly Candy | 160 | a flavour each: sugared gumdrop with sprinkles, caramel, strawberry and blueberry swirls, lemon drop, blue raspberry marble, peach jelly with a candy-striped ring, a gobstopper, orange, cherry and blue jellies, cotton candy, a rainbow lollipop; glassy shine, squishy | a glossy ring and sprinkles that spin and drop | sugar and sprinkles |
+| Pixel | 160 | real pixel art on one grid, a small palette, dark outline and stepped shading that stay level on screen; stiffer | squares hop out in steps, a pixel ring grows in steps | stepped pixels |
+| Neon | 200 | dark glass traced with glowing grid and contour lines in the planet's colour, neon rings and halo; flickers like a neon tube now and then | jagged sparks of electricity crackle out | a glowing streak |
+
+Skies (backgrounds), each with its own motion; the page around the game follows the sky:
+
+| Sky | Price | |
+| --- | ----- | - |
+| Purple Nebula | free | twinkling stars, slowly breathing nebulae |
+| Aurora | 120 | curtains of northern lights sway over the field, snow drifts down, mountains below |
+| Deep Ocean | 120 | sunbeams sway down through the water, bubbles rise, dunes on the sea floor |
+| Inferno | 120 | embers drift up from a flickering, glowing deep |
+| Spiral Galaxy | 180 | a slowly turning galaxy at a slant, with shooting stars |
+
+## The daily challenge
+
+Everyone gets the same planets in the same order (the launcher runs on a seed made from the
+date), plus a rule for the day (low gravity, meteor day, a ring 8% smaller, no boosters but
+more bombs, a faster-turning field, zero-G day) and a goal body. Reaching it the first time
+that day pays 3–5 diamonds. On the home screen the button carries a small badge: a dot while
+today's challenge is open, a tick once it is done.
+
+## Saving and continuing
+
+A game in progress is saved every few seconds, when the app goes to the background and when
+HOME is chosen in the pause menu. The home screen then offers CONTINUE, which puts back every
+planet where it was (still moving if it was), the next planets, the boosters left, the ring and
+the universe; the daily challenge carries on with the same planets. NEW GAME asks before it
+throws a waiting game away. Losing ends a game for good: its save is gone the moment it is lost,
+and the only way on is the revive on the game-over screen (never in the pause menu).
 
 ## Losing
 
@@ -186,9 +232,13 @@ gravity surge grows the ring one step, as if the next body had already been made
 everything in tight for a moment and restarts every countdown. When that next body really
 is made, the ring has already grown, so the extra room is borrowed, not given.
 
+The game-over screen shows the biggest body made in that game (and NEW RECORD when it beats
+every game before), and the diamonds found.
+
 ## Monetization flow
 
 - Rewarded ad: the revive (once per game), and boosters up to each one's per-game maximum
 - Interstitial: every 3rd game, never during the first 3 games
 - Premium purchase ($2.99, placeholder price): no interstitials, every booster at its
   maximum from the start of each game, and a free revive
+- Diamond packs (consumable purchases) for skins and skies
