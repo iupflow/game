@@ -124,7 +124,8 @@ The iOS and Android apps are built with Capacitor; see [BUILD.md](BUILD.md).
   merges; new pairs are looked for as it goes, so merges chain
 - Vortex booster: tap a spot and a small black hole opens there for a few seconds, pulling
   everything nearby into a spin and swallowing the planets up to Earth size
-- Smash booster: a deep-black ball of dark matter crashes in like a billiards break shot.
+- Smash booster: a deep-black ball of dark matter crashes in like a billiards break shot. Every
+  countdown stops the moment it is called, through the warning, the hit and the scatter.
   Every planet flies apart, bouncing off each other and off the screen edges, then gravity
   gathers them back into a new, random arrangement
 - Comet booster: locked until the first Uranus is made, then unlocked for good. Tap a
@@ -181,12 +182,14 @@ announced with a banner and a countdown under the pause button. Events change th
 none of them gives boosters:
 
 - Meteor Shower (11 s): small planets streak in from outside the ring
-- Zero Gravity (about 10 s): the well goes dark, a wave pushes everything gently apart and the
-  planets float and tumble in a cool light for 8 seconds. Nothing is launched meanwhile: the
-  field is yours to rearrange by hand. Touch a floating planet to pick it up, drag it (it shoves
-  others out of its way) and let go, or flick it; drag it onto its twin to merge them. The
-  planet waiting on the orbit can be dragged straight into the field too, so even the random
-  next planet can be put exactly where it is wanted. Each planet's nearest twin is shown by a
+- Zero Gravity (about 9.5 s): the well goes dark, a wave pushes everything gently apart and the
+  planets float and tumble in a cool light for 7 seconds. Nothing is launched meanwhile:
+  instead, three planets can be moved by hand. Touch a floating planet to pick it up (that
+  uses one of the three moves), drag it (it is heavy, so it follows the finger slowly and
+  shoves others out of its way) and let go, or give it a gentle flick; drag it onto its twin to
+  merge them. The planet waiting on the orbit can be picked up too, so even the random next
+  planet can be put where it is wanted. Once the moves are used, the field just floats until
+  gravity returns. Which three planets to move is the decision. Each planet's nearest twin is shown by a
   dotted line in its colour, and planets that have a twin wear a ring, so the pairs are easy to
   see. Merges while weightless have twice the diamond luck. A ring round the well counts the
   float down, the last three seconds out loud; then gravity comes back hard: a pull closes in

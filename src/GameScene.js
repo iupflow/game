@@ -1608,6 +1608,8 @@ export class GameScene extends Phaser.Scene {
     if (this.targeting) this.cancelTargeting();
     this.spendBooster('smash');
     this.wreckerIncoming = true;
+    // countdowns stop from the moment it is called, not only once it hits
+    this.calmUntil = Math.max(this.calmUntil, this.time.now + 4000);
 
     // aim at the middle of the cluster, from a random side, slightly off-centre
     let mx = 0;

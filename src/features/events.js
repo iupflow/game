@@ -11,13 +11,14 @@ const TIER_COLOR = (tier) => TIERS[tier].color;
 
 export const EVENTS = {
   meteors: { name: 'METEOR SHOWER', text: 'Small planets rain in for a while', ms: 11000, color: '#ffb27a' },
-  zerog: { name: 'ZERO GRAVITY', text: 'Drag planets together · 2× diamond luck', ms: 10500, color: '#9fe8ff' },
+  zerog: { name: 'ZERO GRAVITY', text: 'Move 3 planets by hand · 2× diamond luck', ms: 9500, color: '#9fe8ff' },
 };
 const EVENTS_FROM = 4; // events start once an Earth has been made
 const FIRST_EVENT_MS = 40000; // of play
 const EVENT_GAP = [38000, 52000];
 const METEOR_EVERY = 850;
-const FLOAT_MS = 8000; // zero gravity: how long everything floats before gravity comes back
+const FLOAT_MS = 7000; // zero gravity: how long everything floats before gravity comes back
+const ZERO_G_MOVES = 3; // how many planets can be picked up and moved in one float
 
 export const EventsMixin = {
   resetEvents() {
@@ -106,12 +107,13 @@ export const EventsMixin = {
    * No countdown runs meanwhile.
    */
   startZeroG(now) {
-    this.zeroG = { back: now + FLOAT_MS, returned: false, lastCount: 4, returnedAt: 0, shakeAt: 0 };
-    // no shots while weightless: planets are moved by hand instead
+    this.zeroG = { back: now + FLOAT_MS, returned: false, lastCount: 4, returnedAt: 0, shakeAt: 0, moves: ZERO_G_MOVES };
+    // no shots while weightless: a few planets are moved by hand instead
     this.aiming = false;
     this.setPower(0);
     if (this.zeroHint) this.zeroHint.destroy();
-    this.zeroHint = this.text(this.W / 2, 1032, 'Drag planets to pair them up', 24, '#bff2ff').setOrigin(0.5).setDepth(42).setStroke('#0b3a5a', 6);
+    this.zeroHint = this.text(this.W / 2, 1032, '', 24, '#bff2ff').setOrigin(0.5).setDepth(42).setStroke('#0b3a5a', 6);
+    this.refreshZeroHint();
     this.tweens.add({ targets: this.zeroHint, alpha: 0.45, duration: 700, yoyo: true, repeat: -1 });
     for (const p of this.pieces) {
       if (!p.body) continue;
@@ -231,6 +233,14 @@ export const EventsMixin = {
     }
   },
 
+  /** Under the field while weightless: how many moves are left. */
+  refreshZeroHint() {
+    const z = this.zeroG;
+    if (!this.zeroHint || !z) return;
+    const n = z.moves;
+    this.zeroHint.setText(n > 0 ? `Drag planets together · ${n} move${n > 1 ? 's' : ''} left` : 'No moves left · wait for gravity');
+  },
+
   /** Weightless right now (the float, before gravity comes back)? */
   floatingNow() {
     const z = this.zeroG;
@@ -242,6 +252,8 @@ export const EventsMixin = {
    * orbit (which then comes off it to be placed by hand). Returns true when something was picked up.
    */
   tryGrab(pointer) {
+    const z = this.zeroG;
+    if (!z.moves) return false; // all moves used: it just floats until gravity returns
     const f = this.toField(pointer.worldX, pointer.worldY);
     const slop = 20 / this.fieldScale;
     // whichever is nearest the finger: a floating planet, or the one waiting on the orbit
@@ -261,7 +273,9 @@ export const EventsMixin = {
     this.grab = { p: best, x: f.x, y: f.y };
     best.popTarget = 1.08;
     best.flying = false;
-    this.zeroG.grabbed = (this.zeroG.grabbed || 0) + 1;
+    z.moves--;
+    this.refreshZeroHint();
+    this.jelly.pop(this.zeroHint, 0.1);
     Sfx.boing(3);
     Haptics.light();
     return true;
@@ -296,12 +310,12 @@ export const EventsMixin = {
       return;
     }
     const b = g.p.body;
-    let vx = (g.x - b.position.x) * 0.36;
-    let vy = (g.y - b.position.y) * 0.36;
+    let vx = (g.x - b.position.x) * 0.2;
+    let vy = (g.y - b.position.y) * 0.2;
     const sp = Math.hypot(vx, vy);
-    if (sp > 20) {
-      vx *= 20 / sp;
-      vy *= 20 / sp;
+    if (sp > 11) {
+      vx *= 11 / sp;
+      vy *= 11 / sp;
     }
     this.matter.body.setVelocity(b, { x: vx, y: vy });
   },
@@ -314,7 +328,7 @@ export const EventsMixin = {
     g.p.popTarget = 1;
     const v = g.p.body.velocity;
     const sp = Math.hypot(v.x, v.y);
-    if (sp > 12) this.matter.body.setVelocity(g.p.body, { x: (v.x * 12) / sp, y: (v.y * 12) / sp });
+    if (sp > 9) this.matter.body.setVelocity(g.p.body, { x: (v.x * 9) / sp, y: (v.y * 9) / sp });
   },
 
   clearZeroHint() {
