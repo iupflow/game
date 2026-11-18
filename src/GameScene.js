@@ -44,6 +44,7 @@ const GRAVITY = 0.15; // pull toward the centre, in px per step^2
 const DROP_SPEED = 0.6; // a tap lets the planet go almost at rest: gravity does the rest
 const ZERO_G_DROP = 4; // in zero gravity there is no pull, so a tap gives it a push
 const HELD_KNOCK = 2.2; // a planet running into the waiting one faster than this knocks it loose
+const WIND_ON_SHOTS = 1.3; // solar wind pushes a launched planet this much harder than one at rest (still less than gravity)
 const MIN_SPEED = 3; // launch speed range for a pull, in px per step
 const MAX_SPEED = 28;
 const PULL_DEAD = 18; // a drag shorter than this is a tap, not a pull
@@ -1802,6 +1803,7 @@ export class GameScene extends Phaser.Scene {
     const g = GRAVITY * this.gravityMul * this.eventGravity(now) * (crunch ? 2.6 : scattering ? 0.7 : now < this.gravBoostUntil ? 2 : 1);
     const floating = !!this.zeroG && now < this.zeroG.back; // zero gravity: planets drift freely
     const swirl = crunch ? 0.45 : 0;
+    const wind = this.windNow(now); // solar wind: a steady push across the screen
     const damping = scattering ? BOUNCY_DAMPING : SKIN_DAMPING;
     const restitution = scattering ? BOUNCY_RESTITUTION : 0.12;
     let maxTier = -1;
@@ -1814,6 +1816,11 @@ export class GameScene extends Phaser.Scene {
       const f = (g * Math.min(1, d / 40) * b.mass) / STEP2 / d;
       b.force.x += (dx - dy * swirl) * f;
       b.force.y += (dy + dx * swirl) * f;
+      if (wind) {
+        const wk = p.flying ? WIND_ON_SHOTS : 1; // a planet in flight is caught by it like a sail
+        b.force.x += (wind.x * wk * b.mass) / STEP2;
+        b.force.y += (wind.y * wk * b.mass) / STEP2;
+      }
       const drag = p.flying ? FLIGHT_DRAG : scattering || floating ? SCATTER_DRAG : DRAG;
       if (b.frictionAir !== drag) b.frictionAir = drag;
       if (b.restitution !== restitution) b.restitution = restitution;
@@ -2116,7 +2123,7 @@ export class GameScene extends Phaser.Scene {
   /** Two supernovas collapse: the hole swallows the whole field, then a new universe begins. */
   startCrunch(x, y) {
     const now = this.time.now;
-    if (this.zeroG && this.event) this.endEvent(); // the black hole's pull wins over weightlessness
+    if (this.event && (this.zeroG || this.wind)) this.endEvent(); // the black hole's pull wins over weightlessness and wind
     this.hole = new Planet(this, HOLE, x, y);
     this.hole.pop = 0.2;
     this.hole.pv = 0.2;
@@ -2839,6 +2846,11 @@ export class GameScene extends Phaser.Scene {
         this.vortex.until += pausedFor;
       }
       if (this.zeroG) this.zeroG.back += pausedFor;
+      if (this.wind) {
+        this.wind.born += pausedFor;
+        this.wind.until += pausedFor;
+        this.wind.gustAt += pausedFor;
+      }
       for (const list of [this.storms, this.sweeps]) {
         for (const e of list) {
           e.born += pausedFor;

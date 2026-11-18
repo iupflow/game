@@ -94,10 +94,9 @@ export const MenuMixin = {
     this.gainGemsAt(n, at.x, at.y);
   },
 
-  /** A merge made a body of this tier at (fx, fy): sometimes a diamond drops (twice as often while weightless). */
+  /** A merge made a body of this tier at (fx, fy): sometimes a diamond drops. */
   rollGem(tier, fx, fy) {
-    const luck = this.floatingNow() ? 2 : 1;
-    if (Math.random() < gemChance(tier) * luck) this.gainGems(1, fx, fy);
+    if (Math.random() < gemChance(tier)) this.gainGems(1, fx, fy);
   },
 
   // ---------- looks ----------

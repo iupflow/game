@@ -461,6 +461,15 @@ export const Sfx = {
     [0, 4, 7, 11].forEach((st, i) => bell({ f: note(17 + st), dur: 0.9, gain: 0.03, delay: 0.1 + i * 0.09 }));
     noise({ dur: 1.1, gain: 0.03, type: 'bandpass', f: 1200, f2: 4000, attack: 0.2, wet: 0.7 });
   },
+  /** Solar wind rising: a long, airy rush. */
+  wind() {
+    noise({ dur: 2.2, gain: 0.05, type: 'bandpass', f: 450, f2: 1700, q: 0.6, attack: 0.5, wet: 0.5 });
+    noise({ dur: 1.6, gain: 0.025, type: 'highpass', f: 2500, f2: 5200, attack: 0.4, delay: 0.3, wet: 0.6 });
+  },
+  /** A gust in the solar wind. */
+  gust() {
+    noise({ dur: 1.1, gain: 0.035, type: 'bandpass', f: 650, f2: 1300, q: 0.7, attack: 0.3, wet: 0.5 });
+  },
   /** The last seconds before gravity returns. */
   countdown(sec) {
     tone({ f: sec === 1 ? 990 : 740, dur: 0.12, gain: 0.06, type: 'triangle', wet: 0.3 });

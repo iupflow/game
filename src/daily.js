@@ -42,6 +42,7 @@ export const DAILY_RULES = [
   { id: 'bare', name: 'Bare Hands', text: 'No boosters, but bombs come 3x as often', noBoosters: true, bomb: 3, goal: 7, reward: 5 },
   { id: 'spin', name: 'Spin Cycle', text: 'The field turns 3x as fast', spin: 3, goal: 7, reward: 5 },
   { id: 'zerog', name: 'Zero-G Day', text: 'Zero gravity, again and again', events: ['zerog'], eventGap: 0.6, goal: 8, reward: 3 },
+  { id: 'wind', name: 'Windy Day', text: 'Solar wind, again and again', events: ['wind'], eventGap: 0.6, goal: 8, reward: 3 },
 ];
 
 export const ruleById = (id) => DAILY_RULES.find((r) => r.id === id) || null;

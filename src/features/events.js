@@ -4,25 +4,26 @@
 import Phaser from 'phaser';
 import { Sfx } from '../sfx.js';
 import { Haptics } from '../haptics.js';
-import { TEX_SCALE, TIERS } from '../art.js';
-import { mix } from '../jelly.js';
+import { TEX_SCALE } from '../art.js';
 
-const TIER_COLOR = (tier) => TIERS[tier].color;
-
+// weight: how likely each one is to be the next event (zero gravity is the rarest)
 export const EVENTS = {
-  meteors: { name: 'METEOR SHOWER', text: 'Small planets rain in for a while', ms: 11000, color: '#ffb27a' },
-  zerog: { name: 'ZERO GRAVITY', text: 'Drag planets together · 2× diamond luck', ms: 8500, color: '#9fe8ff' },
+  meteors: { name: 'METEOR SHOWER', text: 'Small planets rain in for a while', ms: 11000, color: '#ffb27a', weight: 1 },
+  wind: { name: 'SOLAR WIND', text: 'Everything is blown sideways: aim into the wind!', ms: 9000, color: '#ffe08a', weight: 1 },
+  zerog: { name: 'ZERO GRAVITY', text: 'Drag planets together before gravity returns', ms: 7500, color: '#9fe8ff', weight: 0.5 },
 };
 const EVENTS_FROM = 4; // events start once an Earth has been made
 const FIRST_EVENT_MS = 40000; // of play
 const EVENT_GAP = [38000, 52000];
 const METEOR_EVERY = 850;
-const FLOAT_MS = 6000; // zero gravity: how long everything floats before gravity comes back
+const FLOAT_MS = 5000; // zero gravity: how long everything floats before gravity comes back
+const WIND_PUSH = 0.09; // solar wind: its push at full strength, in px per step^2 (gravity is 0.15)
 const DRIFT_EVERY = 450; // while weightless, currents nudge every floating planet this often
 
 export const EventsMixin = {
   resetEvents() {
     this.event = null;
+    this.stopWind();
     this.zeroG = null;
     this.playMs = 0;
     this.nextEventAt = FIRST_EVENT_MS * ((this.rule && this.rule.eventGap) || 1);
@@ -37,7 +38,16 @@ export const EventsMixin = {
       else this.tickEvent(now);
     } else if (this.runMax >= EVENTS_FROM && this.playMs >= this.nextEventAt) {
       const pool = (this.rule && this.rule.events) || Object.keys(EVENTS);
-      this.startEvent(pool[Math.floor(this.rng() * pool.length)], now);
+      let roll = this.rng() * pool.reduce((sum, id) => sum + EVENTS[id].weight, 0);
+      let pick = pool[pool.length - 1];
+      for (const id of pool) {
+        roll -= EVENTS[id].weight;
+        if (roll < 0) {
+          pick = id;
+          break;
+        }
+      }
+      this.startEvent(pick, now);
     }
     this.refreshEventLabel();
   },
@@ -49,6 +59,7 @@ export const EventsMixin = {
     Sfx.event();
     Haptics.medium();
     if (id === 'zerog') this.startZeroG(now);
+    if (id === 'wind') this.startWind(now);
   },
 
   tickEvent(now) {
@@ -58,6 +69,7 @@ export const EventsMixin = {
       this.dropMeteor(now);
     }
     if (ev.id === 'zerog') this.tickZeroG(now);
+    if (ev.id === 'wind') this.tickWind(now);
     // meteors leave fiery trails while they fly
     if (now - ev.lastFx > 45) {
       ev.lastFx = now;
@@ -72,6 +84,7 @@ export const EventsMixin = {
 
   endEvent() {
     this.event = null;
+    this.stopWind();
     if (this.grab) this.dropGrab();
     this.clearZeroHint();
     this.zeroG = null;
@@ -162,7 +175,7 @@ export const EventsMixin = {
         for (const p of this.pieces) {
           if (!p.body || (this.grab && this.grab.p === p)) continue;
           const a = Math.random() * Math.PI * 2;
-          const k = 0.25 + Math.random() * 0.3;
+          const k = 0.35 + Math.random() * 0.35;
           const v = p.body.velocity;
           this.matter.body.setVelocity(p.body, { x: v.x * 0.9 + Math.cos(a) * k, y: v.y * 0.9 + Math.sin(a) * k });
         }
@@ -316,12 +329,12 @@ export const EventsMixin = {
       return;
     }
     const b = g.p.body;
-    let vx = (g.x - b.position.x) * 0.2;
-    let vy = (g.y - b.position.y) * 0.2;
+    let vx = (g.x - b.position.x) * 0.14;
+    let vy = (g.y - b.position.y) * 0.14;
     const sp = Math.hypot(vx, vy);
-    if (sp > 11) {
-      vx *= 11 / sp;
-      vy *= 11 / sp;
+    if (sp > 8) {
+      vx *= 8 / sp;
+      vy *= 8 / sp;
     }
     this.matter.body.setVelocity(b, { x: vx, y: vy });
   },
@@ -334,7 +347,7 @@ export const EventsMixin = {
     g.p.popTarget = 1;
     const v = g.p.body.velocity;
     const sp = Math.hypot(v.x, v.y);
-    if (sp > 9) this.matter.body.setVelocity(g.p.body, { x: (v.x * 9) / sp, y: (v.y * 9) / sp });
+    if (sp > 7) this.matter.body.setVelocity(g.p.body, { x: (v.x * 7) / sp, y: (v.y * 7) / sp });
   },
 
   clearZeroHint() {
@@ -344,68 +357,93 @@ export const EventsMixin = {
     this.zeroHint = null;
   },
 
-  /**
-   * While weightless, each planet is joined to its nearest twin (the planet waiting on the orbit
-   * included) by a dotted line in its colour, and planets that have a twin wear a ring, so the
-   * pairs to bring together are easy to see; the planet in hand gets a bright ring.
-   */
-  drawTwins(now) {
-    if (!this.twinGfx) this.twinGfx = this.add.graphics().setDepth(36);
-    const g = this.twinGfx;
+  /** While weightless, the planet in hand gets a bright ring. */
+  drawGrab() {
+    if (!this.grabGfx) this.grabGfx = this.add.graphics().setDepth(36);
+    const g = this.grabGfx;
     g.clear();
-    if (!this.floatingNow()) return;
-    const s = this.fieldScale;
-    const list = this.pieces.filter((p) => p.tier >= 0 && p.body && !p.merging);
-    if (this.held && this.held.tier >= 0) list.push(this.held);
-    const done = new Set();
-    const pulse = 0.5 + 0.5 * Math.sin(now * 0.006);
-    for (const p of list) {
-      if (done.has(p)) continue;
-      let twin = null;
-      let best = Infinity;
-      for (const q of list) {
-        if (q === p || q.tier !== p.tier || done.has(q)) continue;
-        const d = Math.hypot(q.x - p.x, q.y - p.y);
-        if (d < best) {
-          best = d;
-          twin = q;
-        }
-      }
-      if (!twin) continue;
-      done.add(p);
-      done.add(twin);
-      const color = mix(TIER_COLOR(p.tier), 0xffffff, 0.35);
-      const a = this.toScreen(p.x, p.y);
-      const b = this.toScreen(twin.x, twin.y);
-      for (const [o, at] of [[p, a], [twin, b]]) {
-        g.lineStyle(3, color, 0.55 + 0.35 * pulse);
-        g.strokeCircle(at.x, at.y, o.rv * s + 5 + 2 * pulse);
-      }
-      const dx = b.x - a.x;
-      const dy = b.y - a.y;
-      const len = Math.hypot(dx, dy) || 1;
-      const from = p.rv * s + 9;
-      const to = len - twin.rv * s - 9;
-      if (to <= from) continue;
-      const shift = (now * 0.03) % 16;
-      for (const [width, c, alpha] of [[6, 0x0b0820, 0.45], [3, color, 0.95]]) {
-        g.lineStyle(width, c, alpha);
-        for (let d = from + shift - 16; d < to; d += 16) {
-          const d0 = Math.max(from, d);
-          const d1 = Math.min(to, d + 8);
-          if (d1 <= d0) continue;
-          g.beginPath();
-          g.moveTo(a.x + (dx * d0) / len, a.y + (dy * d0) / len);
-          g.lineTo(a.x + (dx * d1) / len, a.y + (dy * d1) / len);
-          g.strokePath();
-        }
-      }
+    if (!this.grab || !this.grab.p.body) return;
+    const p = this.grab.p;
+    const at = this.toScreen(p.x, p.y);
+    g.lineStyle(3, 0xffffff, 0.9);
+    g.strokeCircle(at.x, at.y, p.rv * this.fieldScale + 9);
+  },
+
+  // ---------- solar wind ----------
+
+  /**
+   * Solar wind: for a while a wind sweeps across the screen from one side, in gusts. Every planet
+   * is pushed downwind, leaning into it like jelly, and a launched planet is blown off its line,
+   * so shots have to be aimed into the wind. Planets on the downwind edge may be pushed out.
+   */
+  startWind(now) {
+    // across the screen, from the left or the right, a little up or down
+    const from = this.rng() < 0.5 ? 0 : Math.PI;
+    const angle = from + (this.rng() - 0.5) * 0.7;
+    this.wind = { angle, born: now, until: now + EVENTS.wind.ms, gustAt: now + 2200 };
+    const deg = Phaser.Math.RadToDeg(angle);
+    this.windFx = this.add.particles(0, 0, 'dot', {
+      x: { min: -60, max: this.W + 60 },
+      y: { min: 150, max: this.H - 130 },
+      lifespan: { min: 380, max: 760 },
+      speed: { min: 560, max: 900 },
+      angle: deg,
+      rotate: deg,
+      scaleX: { min: 2.4 / TEX_SCALE, max: 4.6 / TEX_SCALE },
+      scaleY: 0.11 / TEX_SCALE,
+      alpha: { start: 0.42, end: 0 },
+      tint: [0xfff2c8, 0xffffff, 0xffd98a],
+      blendMode: 'ADD',
+      frequency: 16,
+      quantity: 2,
+    }).setDepth(17);
+    // three big arrows sweep across, showing which way it blows
+    const ux = Math.cos(angle);
+    const uy = Math.sin(angle);
+    for (let i = 0; i < 3; i++) {
+      const c = this.add.image(this.W / 2 - ux * 300, this.CY - uy * 300 + (i - 1) * 90, 'chevron').setTint(0xffe08a).setRotation(angle).setScale(1.3 / TEX_SCALE).setAlpha(0).setDepth(41).setBlendMode(Phaser.BlendModes.ADD);
+      this.tweens.add({ targets: c, x: c.x + ux * 600, y: c.y + uy * 600, delay: i * 120, duration: 900, ease: 'Sine.inOut', onComplete: () => c.destroy() });
+      this.tweens.add({ targets: c, alpha: { from: 0, to: 0.85 }, delay: i * 120, duration: 300, yoyo: true, hold: 300 });
     }
-    if (this.grab && this.grab.p.body) {
-      const p = this.grab.p;
-      const at = this.toScreen(p.x, p.y);
-      g.lineStyle(3, 0xffffff, 0.9);
-      g.strokeCircle(at.x, at.y, p.rv * s + 9);
+    this.ringFlash = 0.8;
+    this.ringFlashColor = 0xffe08a;
+    Sfx.wind();
+  },
+
+  /** The wind's push right now, as an acceleration in field coordinates (or null when calm). */
+  windNow(now) {
+    const w = this.wind;
+    if (!w || now >= w.until) return null;
+    const t = (now - w.born) / 1000;
+    const ramp = Math.min(1, t / 0.8, (w.until - now) / 800);
+    const gust = 0.76 + 0.18 * Math.sin(t * 1.9) + 0.08 * Math.sin(t * 4.7); // in gusts, but steady enough to aim against
+    const a = WIND_PUSH * ramp * gust;
+    const f = w.angle - this.worldRot; // the wind holds still on screen while the field turns
+    return { x: Math.cos(f) * a, y: Math.sin(f) * a, k: ramp * gust };
+  },
+
+  tickWind(now) {
+    const w = this.wind;
+    if (!w) return;
+    const push = this.windNow(now);
+    if (!push) return;
+    // planets lean and flutter in it like jelly
+    const f = w.angle - this.worldRot;
+    for (const p of this.pieces) if (p.body && Math.random() < 0.3) p.impulse(f, 0.012 * push.k);
+    if (this.windFx) this.windFx.frequency = 30 - 18 * push.k;
+    if (now >= w.gustAt) {
+      w.gustAt = now + 1800 + Math.random() * 1400;
+      Sfx.gust();
+    }
+  },
+
+  stopWind() {
+    this.wind = null;
+    if (this.windFx) {
+      const fx = this.windFx;
+      this.windFx = null;
+      fx.stop();
+      this.time.delayedCall(900, () => fx.destroy());
     }
   },
 
@@ -414,7 +452,7 @@ export const EventsMixin = {
     if (!this.zeroGfx) this.zeroGfx = this.add.graphics().setDepth(36).setBlendMode(Phaser.BlendModes.ADD);
     const g = this.zeroGfx;
     g.clear();
-    this.drawTwins(now);
+    this.drawGrab();
     const z = this.zeroG;
     if (!z || z.returned) return;
     const left = Math.max(0, (z.back - now) / FLOAT_MS);
