@@ -4,18 +4,18 @@
 import Phaser from 'phaser';
 import { Sfx } from '../sfx.js';
 import { Haptics } from '../haptics.js';
-import { TEX_SCALE } from '../art.js';
+import { TEX_SCALE, TIERS } from '../art.js';
 
 // weight: how likely each one is to be the next event (zero gravity is the rarest)
 export const EVENTS = {
   meteors: { name: 'METEOR SHOWER', text: 'Small planets rain in for a while', ms: 11000, color: '#ffb27a', weight: 1 },
-  wind: { name: 'SOLAR WIND', text: 'Everything is blown sideways: aim into the wind!', ms: 9000, color: '#ffe08a', weight: 1 },
+  wind: { name: 'SOLAR WIND', text: 'Planets blown in: aim into the wind!', ms: 9000, color: '#ffe08a', weight: 1 },
   zerog: { name: 'ZERO GRAVITY', text: 'Drag planets together before gravity returns', ms: 7500, color: '#9fe8ff', weight: 0.5 },
 };
 const EVENTS_FROM = 4; // events start once an Earth has been made
 const FIRST_EVENT_MS = 40000; // of play
 const EVENT_GAP = [38000, 52000];
-const METEOR_EVERY = 850;
+const METEOR_EVERY = 560; // a meteor this often during a shower
 const FLOAT_MS = 5000; // zero gravity: how long everything floats before gravity comes back
 const WIND_PUSH = 0.09; // solar wind: its push at full strength, in px per step^2 (gravity is 0.15)
 const DRIFT_EVERY = 450; // while weightless, currents nudge every floating planet this often
@@ -97,13 +97,32 @@ export const EventsMixin = {
     this.refreshEventLabel();
   },
 
+  /** A meteor hitting the field: a burst of hot sparks and a small jolt. */
+  meteorImpact(p, closing) {
+    const at = this.toScreen(p.x, p.y);
+    const ADD = Phaser.BlendModes.ADD;
+    for (let i = 0; i < 9; i++) {
+      const a = Math.random() * Math.PI * 2;
+      const d = 14 + Math.random() * 20;
+      const sp = this.add.image(at.x, at.y, i % 2 ? 'spark' : 'dot').setTint(i % 3 ? 0xffb35a : 0xffe08a).setBlendMode(ADD).setDepth(40).setScale(0.34 / TEX_SCALE);
+      this.tweens.add({ targets: sp, x: at.x + Math.cos(a) * d, y: at.y + Math.sin(a) * d, alpha: 0, scale: 0.05 / TEX_SCALE, duration: 340, onComplete: () => sp.destroy() });
+    }
+    const flash = this.add.image(at.x, at.y, 'soft').setTint(0xffc27a).setBlendMode(ADD).setDepth(40).setScale((p.rv * this.fieldScale * 1.2) / 64 / TEX_SCALE).setAlpha(0.6);
+    this.tweens.add({ targets: flash, alpha: 0, scale: flash.scale * 1.6, duration: 260, onComplete: () => flash.destroy() });
+    const now = this.time.now;
+    if (now - (this.meteorShakeAt || 0) > 150) {
+      this.meteorShakeAt = now;
+      this.cameras.main.shake(70, Math.min(0.0035, 0.00025 * closing));
+    }
+  },
+
   /** A small planet (the smallest the launcher gives) streaks in from outside the ring. */
   dropMeteor(now) {
     const a = this.rng() * Math.PI * 2;
     const far = (this.ringScreen() + 150) / this.fieldScale;
     const p = this.spawnPiece(this.CX + Math.cos(a) * far, this.CY + Math.sin(a) * far, this.launchLow());
     const aim = a + Math.PI + (this.rng() - 0.5) * 0.5;
-    const speed = 7 + this.rng() * 3;
+    const speed = 11 + this.rng() * 4;
     this.matter.body.setVelocity(p.body, { x: Math.cos(aim) * speed, y: Math.sin(aim) * speed });
     p.body.frictionAir = 0.002;
     p.flying = true;
@@ -380,7 +399,7 @@ export const EventsMixin = {
     // across the screen, from the left or the right, a little up or down
     const from = this.rng() < 0.5 ? 0 : Math.PI;
     const angle = from + (this.rng() - 0.5) * 0.7;
-    this.wind = { angle, born: now, until: now + EVENTS.wind.ms, gustAt: now + 2200 };
+    this.wind = { angle, born: now, until: now + EVENTS.wind.ms, gustAt: now + 2200, giftAt: now + 1000 };
     const deg = Phaser.Math.RadToDeg(angle);
     this.windFx = this.add.particles(0, 0, 'dot', {
       x: { min: -60, max: this.W + 60 },
@@ -435,6 +454,47 @@ export const EventsMixin = {
       w.gustAt = now + 1800 + Math.random() * 1400;
       Sfx.gust();
     }
+    if (now >= w.giftAt && now < w.until - 1500) {
+      w.giftAt = now + 1700 + this.rng() * 600;
+      this.blowInPlanet(now);
+    }
+    // what it carries in leaves pale streaks behind
+    if (now - (w.trailAt || 0) > 45) {
+      w.trailAt = now;
+      for (const p of this.pieces) {
+        if (!p.blown || !p.flying) continue;
+        const at = this.toScreen(p.x, p.y);
+        const d = this.add.image(at.x, at.y, 'dot').setTint(0xfff2c8).setBlendMode(Phaser.BlendModes.ADD).setDepth(19).setRotation(w.angle).setScale(1.6 / TEX_SCALE, 0.16 / TEX_SCALE).setAlpha(0.6);
+        this.tweens.add({ targets: d, alpha: 0, scaleX: 0.4 / TEX_SCALE, duration: 420, onComplete: () => d.destroy() });
+      }
+    }
+  },
+
+  /** The solar wind carries a small planet in from the upwind edge of the screen. */
+  blowInPlanet(now) {
+    const w = this.wind;
+    const ux = Math.cos(w.angle);
+    const uy = Math.sin(w.angle);
+    const kind = Math.min(this.launchLow() + (this.rng() < 0.35 ? 1 : 0), 3);
+    const r = TIERS[kind].r * this.fieldScale;
+    // in at the upwind side of the screen, at a random height
+    const sx = ux > 0 ? 10 + r : this.W - 10 - r;
+    const sy = Phaser.Math.Clamp(this.CY + (this.rng() - 0.5) * 520 - uy * 200, 196 + r, 1052 - r);
+    const f = this.toField(sx, sy);
+    const p = this.spawnPiece(f.x, f.y, kind);
+    const fa = w.angle - this.worldRot;
+    const speed = 4.5 + this.rng() * 2;
+    this.matter.body.setVelocity(p.body, { x: Math.cos(fa) * speed, y: Math.sin(fa) * speed });
+    p.body.frictionAir = 0.002;
+    p.flying = true;
+    p.blown = true;
+    p.born = now;
+    p.pop = 0.15; // it grows into view as it is swept in
+    for (let i = 0; i < 7; i++) {
+      const d = this.add.image(sx - ux * 20, sy + (Math.random() - 0.5) * 40, 'dot').setTint(0xfff2c8).setBlendMode(Phaser.BlendModes.ADD).setDepth(41).setRotation(w.angle).setScale(2.2 / TEX_SCALE, 0.14 / TEX_SCALE).setAlpha(0.7);
+      this.tweens.add({ targets: d, x: d.x + ux * (90 + Math.random() * 60), y: d.y + uy * 90, alpha: 0, delay: i * 30, duration: 380, onComplete: () => d.destroy() });
+    }
+    Sfx.blownIn();
   },
 
   stopWind() {

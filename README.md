@@ -185,12 +185,15 @@ From the first Earth on, about every 40–50 seconds of play something happens f
 announced with a banner and a countdown under the pause button. Events change the situation;
 none of them gives boosters:
 
-- Meteor Shower (11 s): small planets streak in from outside the ring
+- Meteor Shower (11 s): small planets streak in fast from outside the ring, about two a second,
+  and hit the field in a burst of hot sparks with a small jolt
 - Solar Wind (9 s): a wind sweeps across the screen from one side, in gusts, with streaks of
   light racing across and arrows showing its way at the start. Every planet is pushed downwind
   and leans into it like jelly, so the cluster slides toward one edge of the ring, where planets
   may be squeezed out; a launched planet is caught by it like a sail and blown off its line, so
-  shots have to be aimed into the wind. It is always weaker than gravity, so nothing is blown away
+  shots have to be aimed into the wind. Every couple of seconds it also carries a small planet in
+  from the upwind edge of the screen, trailing pale streaks. It is always weaker than gravity, so
+  nothing is blown away
 - Zero Gravity (about 7.5 s, the rarest event, half as likely as the others): the well goes
   dark, a wave pushes everything well apart and the planets float and tumble in a cool light
   for 5 seconds. Nothing is launched and no new planet comes meanwhile; the planet that was

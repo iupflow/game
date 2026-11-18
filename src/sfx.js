@@ -466,6 +466,11 @@ export const Sfx = {
     noise({ dur: 2.2, gain: 0.05, type: 'bandpass', f: 450, f2: 1700, q: 0.6, attack: 0.5, wet: 0.5 });
     noise({ dur: 1.6, gain: 0.025, type: 'highpass', f: 2500, f2: 5200, attack: 0.4, delay: 0.3, wet: 0.6 });
   },
+  /** A planet swept in by the solar wind: a quick rising whoosh. */
+  blownIn() {
+    noise({ dur: 0.5, gain: 0.04, type: 'bandpass', f: 900, f2: 2600, q: 1, attack: 0.08, wet: 0.4 });
+    tone({ f: 600, f2: 900, dur: 0.15, gain: 0.02, type: 'sine', delay: 0.05, wet: 0.3 });
+  },
   /** A gust in the solar wind. */
   gust() {
     noise({ dur: 1.1, gain: 0.035, type: 'bandpass', f: 650, f2: 1300, q: 0.7, attack: 0.3, wet: 0.5 });

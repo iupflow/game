@@ -2011,6 +2011,7 @@ export class GameScene extends Phaser.Scene {
   land(p, closing) {
     p.flying = false;
     if (p.body) p.body.frictionAir = DRAG;
+    if (p.meteor && closing > 4) this.meteorImpact(p, closing);
     if (closing <= 2) return;
     Sfx.land(closing, p.r);
     if (closing > 18) Haptics.heavy();
