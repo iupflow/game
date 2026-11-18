@@ -407,8 +407,18 @@ export const Sfx = {
 
   /** A star bomb goes off. */
   bomb() {
-    boom(0.3);
-    crunch({ dur: 0.25, gain: 0.09, f: 1200, delay: 0.02 });
+    boom(0.42);
+    crunch({ dur: 0.3, gain: 0.11, f: 1200, delay: 0.02 });
+    noise({ dur: 0.55, gain: 0.05, type: 'highpass', f: 2600, f2: 700, delay: 0.03, wet: 0.5 });
+  },
+  /** A bomb lands and arms: a click, and the fuse starts to fizz. */
+  bombArm() {
+    tone({ f: 1500, dur: 0.05, gain: 0.04, type: 'square', wet: 0, filter: { type: 'lowpass', f: 3200 } });
+    noise({ dur: 0.4, gain: 0.025, type: 'highpass', f: 3000, f2: 6500, wet: 0.1 });
+  },
+  /** The fuse's beep: higher as it burns down (t from 0 to 1). */
+  bombTick(t) {
+    tone({ f: 700 + 800 * t, dur: 0.06, gain: 0.045, type: 'square', wet: 0.05, filter: { type: 'lowpass', f: 2800 } });
   },
 
   /** Saturn's rings catch some moons: little chimes, one per moon. */
@@ -439,6 +449,28 @@ export const Sfx = {
     tone({ f: 300, f2: 900, dur: 0.6, gain: 0.04, type: 'sawtooth', wet: 0.3, filter: { type: 'lowpass', f: 2200 } });
   },
 
+  /** Jelly landing or being poked: a soft, springy boing. step picks the note. */
+  boing(step = 0) {
+    const f = note(12 + (step % 6) * 2);
+    tone({ f: f * 0.7, f2: f * 1.3, dur: 0.15, gain: 0.05, type: 'sine', wet: 0.25 });
+    tone({ f: f * 1.3, f2: f * 0.92, dur: 0.2, gain: 0.03, type: 'triangle', delay: 0.05, wet: 0.3 });
+  },
+  /** Zero gravity: everything lets go, a rising, airy shimmer. */
+  zeroG() {
+    tone({ f: 220, f2: 660, dur: 0.9, gain: 0.05, type: 'sine', attack: 0.08, wet: 0.7 });
+    [0, 4, 7, 11].forEach((st, i) => bell({ f: note(17 + st), dur: 0.9, gain: 0.03, delay: 0.1 + i * 0.09 }));
+    noise({ dur: 1.1, gain: 0.03, type: 'bandpass', f: 1200, f2: 4000, attack: 0.2, wet: 0.7 });
+  },
+  /** The last seconds before gravity returns. */
+  countdown(sec) {
+    tone({ f: sec === 1 ? 990 : 740, dur: 0.12, gain: 0.06, type: 'triangle', wet: 0.3 });
+  },
+  /** Gravity slams back: a falling whoosh into a thud. */
+  gravityBack() {
+    noise({ dur: 0.45, gain: 0.07, type: 'bandpass', f: 3000, f2: 300, attack: 0.05, wet: 0.4 });
+    tone({ f: 300, f2: 55, dur: 0.5, gain: 0.09, type: 'sine', wet: 0.2 });
+    boom(0.2, 0.38);
+  },
   /** A diamond turns up: a bright, glassy little chime. */
   gem() {
     bell({ f: note(24), dur: 0.5, gain: 0.05 });

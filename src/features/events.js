@@ -8,7 +8,7 @@ import { TEX_SCALE } from '../art.js';
 
 export const EVENTS = {
   meteors: { name: 'METEOR SHOWER', text: 'Small planets rain in for a while', ms: 11000, color: '#ffb27a' },
-  zerog: { name: 'ZERO GRAVITY', text: 'Everything floats apart… then falls back together', ms: 7500, color: '#9fe8ff' },
+  zerog: { name: 'ZERO GRAVITY', text: 'Planets float free: shoot to knock them together!', ms: 7500, color: '#9fe8ff' },
 };
 const EVENTS_FROM = 4; // events start once an Earth has been made
 const FIRST_EVENT_MS = 40000; // of play
@@ -67,9 +67,12 @@ export const EventsMixin = {
   },
 
   endEvent() {
-    const ev = this.event;
     this.event = null;
     this.zeroG = null;
+    if (this.zeroTint) {
+      this.zeroTint.destroy();
+      this.zeroTint = null;
+    }
     const [lo, hi] = EVENT_GAP;
     this.nextEventAt = this.playMs + (lo + this.rng() * (hi - lo)) * ((this.rule && this.rule.eventGap) || 1);
     this.refreshEventLabel();
@@ -91,52 +94,152 @@ export const EventsMixin = {
   },
 
   /**
-   * Zero gravity: everything drifts apart and floats for a few seconds, then gravity comes back
-   * hard and slams the field together again in a new order. No countdown runs meanwhile.
+   * Zero gravity: the well goes dark, a wave pushes everything apart and the planets float and
+   * tumble. Shots fly straight, so planets can be knocked together like billiard balls. A ring
+   * round the well counts the float down (the last three seconds out loud); then gravity comes back
+   * hard: a pull closes in from the edges and the field slams together in a new order.
+   * No countdown runs meanwhile.
    */
   startZeroG(now) {
-    this.zeroG = { back: now + FLOAT_MS, returned: false };
+    this.zeroG = { back: now + FLOAT_MS, returned: false, lastCount: 4, returnedAt: 0, shakeAt: 0 };
     for (const p of this.pieces) {
       if (!p.body) continue;
       const dx = p.x - this.CX;
       const dy = p.y - this.CY;
       const d = Math.hypot(dx, dy) || 1;
-      const out = 1.2 + this.rng() * 1.6;
+      const out = 1.8 + this.rng() * 1.8;
       const side = (this.rng() - 0.5) * 1.6;
       const v = p.body.velocity;
       this.matter.body.setVelocity(p.body, { x: v.x + (dx / d) * out - (dy / d) * side, y: v.y + (dy / d) * out + (dx / d) * side });
+      this.matter.body.setAngularVelocity(p.body, (Math.random() - 0.5) * 0.08); // they tumble
+      p.impulse(Math.atan2(dy, dx), 0.12); // a jolt as gravity lets go
     }
     this.calmUntil = Math.max(this.calmUntil, now + EVENTS.zerog.ms + 1500);
     this.ringFlash = 1;
     this.ringFlashColor = 0x9fe8ff;
+    // the well goes out, and a wave runs from it
+    this.tweens.add({ targets: this.coreParts, alpha: 0.12, duration: 500 });
+    const ADD = Phaser.BlendModes.ADD;
+    for (let i = 0; i < 3; i++) {
+      const ring = this.add.circle(this.CX, this.CY, 24).setStrokeStyle(5 - i * 1.5, 0x9fe8ff, 0.9).setDepth(39).setBlendMode(ADD);
+      this.tweens.add({ targets: ring, radius: 430 + i * 50, alpha: 0, delay: i * 120, duration: 950, ease: 'Cubic.out', onComplete: () => ring.destroy() });
+    }
+    // everything takes on a cool, weightless light
+    if (this.zeroTint) this.zeroTint.destroy();
+    this.zeroTint = this.add.rectangle(this.W / 2, this.H / 2, this.W * 3, this.H * 3, 0x5fd0ff, 0).setDepth(18).setBlendMode(ADD);
+    this.tweens.add({ targets: this.zeroTint, alpha: 0.07, duration: 600 });
+    Sfx.zeroG();
+    Haptics.medium();
   },
 
   tickZeroG(now) {
     const z = this.zeroG;
     if (!z) return;
-    if (!z.returned && now >= z.back) {
-      z.returned = true;
-      this.floatText(this.W / 2, 300, 'GRAVITY RETURNS!', '#9fe8ff', 32);
-      this.ringFlash = 1;
-      this.ringFlashColor = 0xffffff;
-      this.ringSpinV = 4;
-      Sfx.shock();
-      Haptics.heavy();
+    if (!z.returned) {
+      const left = z.back - now;
+      const sec = Math.ceil(left / 1000);
+      if (sec >= 1 && sec <= 3 && sec < z.lastCount) {
+        z.lastCount = sec;
+        this.zeroCount(sec);
+      }
+      if (left <= 0) this.gravityReturns(now);
     }
-    // floating dust drifting up while it lasts
-    if (!z.returned && Math.random() < 0.25) {
+    // floating specks drifting up while it lasts
+    if (!z.returned && Math.random() < 0.45) {
       const x = Math.random() * this.W;
-      const y = 300 + Math.random() * 700;
-      const d = this.add.image(x, y, 'dot').setTint(0xbff2ff).setBlendMode(Phaser.BlendModes.ADD).setDepth(17).setAlpha(0).setScale((0.25 + Math.random() * 0.3) / TEX_SCALE);
-      this.tweens.add({ targets: d, alpha: { from: 0, to: 0.7 }, y: y - 60, duration: 900, yoyo: true, onComplete: () => d.destroy() });
+      const y = 280 + Math.random() * 760;
+      const d = this.add.image(x, y, Math.random() < 0.3 ? 'spark' : 'dot').setTint(0xbff2ff).setBlendMode(Phaser.BlendModes.ADD).setDepth(17).setAlpha(0).setScale((0.25 + Math.random() * 0.35) / TEX_SCALE);
+      this.tweens.add({ targets: d, alpha: { from: 0, to: 0.75 }, y: y - 70, angle: 90, duration: 1000, yoyo: true, onComplete: () => d.destroy() });
     }
+  },
+
+  /** 3, 2, 1: a big number pops up over the well, with a beep. */
+  zeroCount(sec) {
+    const t = this.text(this.CX, this.CY - 120, String(sec), 70, '#bff2ff').setOrigin(0.5).setDepth(42).setStroke('#0b3a5a', 9).setScale(0.3);
+    this.tweens.add({ targets: t, scale: 1.1, duration: 260, ease: 'Back.out' });
+    this.tweens.add({ targets: t, alpha: 0, scale: 1.4, delay: 520, duration: 360, onComplete: () => t.destroy() });
+    this.ringFlash = 0.6;
+    this.ringFlashColor = 0x9fe8ff;
+    Sfx.countdown(sec);
+    Haptics.light();
+  },
+
+  /** Gravity comes back: the well lights up, a pull closes in from the edges, light streaks in. */
+  gravityReturns(now) {
+    const z = this.zeroG;
+    z.returned = true;
+    z.returnedAt = now;
+    const CX = this.CX;
+    const CY = this.CY;
+    const ADD = Phaser.BlendModes.ADD;
+    this.floatText(this.W / 2, 300, 'GRAVITY RETURNS!', '#9fe8ff', 36);
+    this.ringFlash = 1;
+    this.ringFlashColor = 0xffffff;
+    this.ringSpinV = 4;
+    this.tweens.add({ targets: this.coreParts, alpha: 1, duration: 200 });
+    if (this.zeroTint) {
+      const tint = this.zeroTint;
+      this.zeroTint = null;
+      this.tweens.add({ targets: tint, alpha: 0, duration: 500, onComplete: () => tint.destroy() });
+    }
+    for (let i = 0; i < 2; i++) {
+      const ring = this.add.circle(CX, CY, 470 - i * 60).setStrokeStyle(6 - i * 2, 0xbff2ff, 0.85).setDepth(39).setBlendMode(ADD);
+      this.tweens.add({ targets: ring, radius: 26, alpha: 0.15, delay: i * 90, duration: 430, ease: 'Cubic.in', onComplete: () => ring.destroy() });
+    }
+    for (let i = 0; i < 28; i++) {
+      const a = Math.random() * Math.PI * 2;
+      const r = 260 + Math.random() * 220;
+      const d = this.add.image(CX + Math.cos(a) * r, CY + Math.sin(a) * r, 'dot').setTint(i % 2 ? 0xbff2ff : 0xffffff).setBlendMode(ADD).setDepth(39).setRotation(a).setScale(1.6 / TEX_SCALE, 0.22 / TEX_SCALE).setAlpha(0.8);
+      this.tweens.add({ targets: d, x: CX + Math.cos(a) * 40, y: CY + Math.sin(a) * 40, alpha: 0, delay: Math.random() * 120, duration: 360, ease: 'Cubic.in', onComplete: () => d.destroy() });
+    }
+    const flash = this.add.image(CX, CY, 'soft').setTint(0xdff8ff).setBlendMode(ADD).setDepth(39).setScale(0.6 / TEX_SCALE);
+    this.tweens.add({ targets: flash, scale: 4 / TEX_SCALE, alpha: 0, delay: 380, duration: 500, ease: 'Cubic.out', onComplete: () => flash.destroy() });
+    this.cameras.main.shake(160, 0.004);
+    Sfx.gravityBack();
+    Haptics.heavy();
+  },
+
+  /** While gravity slams the field back together, hard hits spark and shake the screen a little. */
+  slamHit(A, B, closing) {
+    const z = this.zeroG;
+    const now = this.time.now;
+    if (!z || !z.returned || now - z.returnedAt > 1800 || closing < 5) return;
+    const x = (A.x * B.r + B.x * A.r) / (A.r + B.r);
+    const y = (A.y * B.r + B.y * A.r) / (A.r + B.r);
+    const at = this.toScreen(x, y);
+    for (let i = 0; i < 6; i++) {
+      const a = Math.random() * Math.PI * 2;
+      const sp = this.add.image(at.x, at.y, i % 2 ? 'spark' : 'dot').setTint(0xdff8ff).setBlendMode(Phaser.BlendModes.ADD).setDepth(40).setScale(0.34 / TEX_SCALE);
+      this.tweens.add({ targets: sp, x: at.x + Math.cos(a) * 26, y: at.y + Math.sin(a) * 26, alpha: 0, duration: 300, onComplete: () => sp.destroy() });
+    }
+    if (now - z.shakeAt > 140) {
+      z.shakeAt = now;
+      this.cameras.main.shake(80, Math.min(0.004, 0.0004 * closing));
+    }
+  },
+
+  /** Every frame while floating: a ring round the well shows how long until gravity returns. */
+  drawZeroG(now) {
+    if (!this.zeroGfx) this.zeroGfx = this.add.graphics().setDepth(36).setBlendMode(Phaser.BlendModes.ADD);
+    const g = this.zeroGfx;
+    g.clear();
+    const z = this.zeroG;
+    if (!z || z.returned) return;
+    const left = Math.max(0, (z.back - now) / FLOAT_MS);
+    const bright = left < 0.6 && Math.sin(now * 0.025) > 0 ? 1 : 0.75; // it blinks near the end
+    g.lineStyle(10, 0x9fe8ff, 0.14);
+    g.strokeCircle(this.CX, this.CY, 54);
+    g.lineStyle(5, 0xbff2ff, bright);
+    g.beginPath();
+    g.arc(this.CX, this.CY, 54, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * left);
+    g.strokePath();
   },
 
   /** How gravity is changed by an event right now: almost none while floating, then strong. */
   eventGravity(now) {
     const z = this.zeroG;
     if (!z) return 1;
-    return now < z.back ? 0.08 : 2.6;
+    return now < z.back ? 0.02 : 2.6;
   },
 
   /** A small label under the pause button while an event lasts. */

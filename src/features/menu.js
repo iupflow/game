@@ -5,9 +5,9 @@ import { Sfx } from '../sfx.js';
 import { Haptics } from '../haptics.js';
 import { Meta } from '../meta.js';
 import { Ads, store } from '../ads.js';
-import { SKINS, THEMES, GEM_PACKS, skinById, themeById, applyPageTheme } from '../themes.js';
+import { SKINS, THEMES, GEM_PACKS, skinById, themeById, applyPageTheme, uiPalette } from '../themes.js';
 import { dailyChallenge, seededRandom, todayKey } from '../daily.js';
-import { TIERS, HOLE, TEX_SCALE, setArtSkin, wearsSkin, dropSkinTextures, skinPreview, hasKindTextures, makeKindTextures } from '../art.js';
+import { TIERS, HOLE, TEX_SCALE, PORTRAIT_R, setArtSkin, wearsSkin, dropSkinTextures, skinPreview, hasKindTextures, makeKindTextures } from '../art.js';
 import { skyPreview } from '../backgrounds.js';
 
 const OVERLAY = 100;
@@ -104,6 +104,7 @@ export const MenuMixin = {
   applyLooks() {
     this.skin = skinById(Meta.using('skin'));
     this.theme = themeById(Meta.using('theme'));
+    this.pal = uiPalette(this.theme);
     setArtSkin(this.skin.id);
     applyPageTheme(this.theme);
   },
@@ -133,48 +134,54 @@ export const MenuMixin = {
     this.setGameUi(false);
     if (this.hint) this.hint.setVisible(false);
     const items = (this.homeItems = []);
-    const add = (o) => {
-      items.push(o.setDepth(OVERLAY));
+    const add = (o, depth = OVERLAY) => {
+      items.push(o.setDepth(depth));
       return o;
     };
-    add(this.add.rectangle(W / 2, this.H / 2, W * 3, this.H * 3, 0x05020f, 0.35));
-    const title = add(this.text(W / 2, 300, 'JELLY DROP', 78, '#ffffff').setOrigin(0.5).setStroke('#3a2490', 12));
-    this.tweens.add({ targets: title, scale: { from: 1, to: 1.04 }, duration: 1400, yoyo: true, repeat: -1, ease: 'Sine.inOut' });
-    add(this.text(W / 2, 374, 'Merge planets. Grow the universe.', 24, '#d6ccff').setOrigin(0.5));
+    // no veil over the sky: just soft shade behind the title and the buttons, so they read well
+    add(this.add.image(W / 2, 330, 'soft').setTint(this.pal.dim).setAlpha(0.55).setScale(8.5 / TEX_SCALE, 3.4 / TEX_SCALE), OVERLAY - 2);
+    add(this.add.image(W / 2, 1000, 'soft').setTint(this.pal.dim).setAlpha(0.6).setScale(9 / TEX_SCALE, 6 / TEX_SCALE), OVERLAY - 2);
+    this.homeOrbit(items);
+    this.jellyTitle(items, 312);
+    add(this.text(W / 2, 384, 'Merge planets. Grow the universe.', 24, this.pal.light).setOrigin(0.5));
     // the biggest body ever made, as a little trophy
     const record = Meta.record;
     if (record >= 0) {
       if (!hasKindTextures(this, record)) makeKindTextures(this, record);
-      add(this.portrait(W / 2 - 104, 476, record, 30));
-      add(this.text(W / 2 - 34, 460, 'BIGGEST EVER', 16, '#b9a8e6').setOrigin(0, 0.5));
-      add(this.text(W / 2 - 34, 490, TIERS[record].name, 28).setOrigin(0, 0.5));
+      add(this.portrait(W / 2 - 104, 478, record, 30));
+      add(this.text(W / 2 - 34, 462, 'BIGGEST EVER', 16, this.pal.soft).setOrigin(0, 0.5));
+      add(this.text(W / 2 - 34, 492, TIERS[record].name, 28).setOrigin(0, 0.5));
     }
 
     const saved = this.savedGame();
     let y;
     if (saved) {
-      items.push(this.button(W / 2, 770, 440, 104, '▶  CONTINUE', 0x37b24d, () => this.startGame(saved.mode, saved), 42));
-      items.push(this.button(W / 2, 884, 440, 74, 'NEW GAME', 0x4c6ef5, () => this.confirmNewGame('normal'), 28));
+      items.push(this.button(W / 2, 770, 440, 104, '▶  CONTINUE', 0x37b24d, () => this.startGame(saved.mode, saved), 42, { breathe: true }));
+      items.push(this.button(W / 2, 884, 440, 74, 'NEW GAME', this.pal.button2, () => this.confirmNewGame('normal'), 28));
       y = 978;
     } else {
-      items.push(this.button(W / 2, 800, 440, 104, '▶  PLAY', 0x37b24d, () => this.startGame('normal'), 42));
+      items.push(this.button(W / 2, 800, 440, 104, '▶  PLAY', 0x37b24d, () => this.startGame('normal'), 42, { breathe: true }));
       y = 922;
     }
     const daily = dailyChallenge();
-    items.push(this.button(W / 2, y, 440, 80, 'DAILY CHALLENGE', 0xf08c2e, () => this.openDaily(), 28));
-    // a small badge on the button: a dot while today's challenge is open, a tick once it is done
+    const dailyBtn = this.button(W / 2, y, 440, 80, 'DAILY CHALLENGE', 0xf08c2e, () => this.openDaily(), 28);
+    items.push(dailyBtn);
+    // a small badge on the button (it wobbles with it): a dot while today's challenge is open, a tick once done
     const done = Meta.daily(daily.date).done;
-    const badge = add(this.add.container(W / 2 + 206, y - 34));
+    const badge = this.add.container(206, -34);
     const bg = this.add.graphics();
     bg.fillStyle(done ? 0x2f9e44 : 0xff4d6d, 1);
     bg.fillCircle(0, 0, 17);
+    bg.fillStyle(0xffffff, 0.35);
+    bg.fillEllipse(-4, -7, 14, 7);
     bg.lineStyle(3, 0xffffff, 1);
     bg.strokeCircle(0, 0, 17);
     badge.add([bg, this.text(0, 1, done ? '✓' : '!', 22).setOrigin(0.5)]);
+    dailyBtn.add(badge);
     if (!done) this.tweens.add({ targets: badge, scale: 1.15, duration: 600, yoyo: true, repeat: -1, ease: 'Sine.inOut' });
     y += 96;
-    items.push(this.button(W / 2 - 112, y, 208, 74, 'SHOP', 0x7a4fd8, () => this.openShop(), 28));
-    items.push(this.button(W / 2 + 112, y, 208, 74, 'ALBUM', 0x4c6ef5, () => this.openAlbum(), 28));
+    items.push(this.button(W / 2 - 112, y, 208, 74, 'SHOP', this.pal.button, () => this.openShop(), 28));
+    items.push(this.button(W / 2 + 112, y, 208, 74, 'ALBUM', this.pal.button2, () => this.openAlbum(), 28));
     if (!this.premium) {
       items.push(
         this.button(W / 2, y + 92, 440, 58, 'No Ads + Max Boosters  $2.99', 0x5a3aa8, async () => {
@@ -189,11 +196,108 @@ export const MenuMixin = {
     }
   },
 
+  /**
+   * The name as jelly letters in candy colours: they drop in one by one, land with a squash and
+   * then breathe in a slow wave. Each one wobbles when touched.
+   */
+  jellyTitle(items, y) {
+    const W = this.W;
+    const colors = ['#ff8fc6', '#ffb86b', '#ffe066', '#7ee8b5', '#7fd0ff', '#b59cff'];
+    const letters = [];
+    let width = 0;
+    let n = 0;
+    for (const ch of 'JELLY DROP') {
+      if (ch === ' ') {
+        letters.push(null);
+        width += 22;
+        continue;
+      }
+      const t = this.text(0, 0, ch, 84, colors[n++ % colors.length])
+        .setOrigin(0.5, 0.8)
+        .setStroke(this.pal.stroke, 12)
+        .setShadow(0, 6, 'rgba(0,0,0,0.28)', 0, true, true);
+      letters.push(t);
+      width += t.width - 10;
+    }
+    let x = W / 2 - width / 2;
+    let i = 0;
+    for (const t of letters) {
+      if (!t) {
+        x += 22;
+        continue;
+      }
+      const w = t.width - 10;
+      t.setPosition(x + w / 2, y).setDepth(OVERLAY);
+      items.push(t);
+      x += w;
+      // it falls in and lands with a squash
+      const delay = 120 + i * 70;
+      t.y = y - 360 - i * 18;
+      t.setAlpha(0);
+      this.tweens.add({ targets: t, alpha: 1, duration: 120, delay });
+      this.tweens.add({
+        targets: t,
+        y,
+        duration: 420,
+        delay,
+        ease: 'Quad.in',
+        onComplete: () => {
+          if (!t.active) return;
+          this.jelly.wobble(t, 0.16);
+          if (i % 3 === 0) Sfx.boing(i);
+        },
+      });
+      this.tappable(t, () => {
+        this.jelly.wobble(t, 0.2);
+        Sfx.boing(Math.floor(Math.random() * 6));
+      }, { breathe: true });
+      t.jelly.t = i * 0.55; // the breathing runs along the word like a wave
+      i++;
+    }
+  },
+
+  /** A few planets in the skin in use, circling the well on a tilted orbit behind the menu. */
+  homeOrbit(items) {
+    const CX = this.CX;
+    const CY = this.CY;
+    const orbits = [
+      [0, 13, 112, 0.0009, 0.2],
+      [2, 17, 146, 0.0006, 2.4],
+      [4, 20, 176, 0.00045, 4.2],
+    ];
+    const bodies = orbits.map(([kind, r, rx, speed, a]) => {
+      const img = this.portrait(CX, CY, kind, r);
+      items.push(img);
+      return { img, r, rx, ry: rx * 0.3, speed, a, wob: Math.random() * 6 };
+    });
+    const tilt = -0.16;
+    const step = (_t, delta) => {
+      const dt = Math.min(delta, 40);
+      for (const b of bodies) {
+        if (!b.img.active) continue;
+        b.a += b.speed * dt;
+        b.wob += dt * 0.004;
+        const ox = Math.cos(b.a) * b.rx;
+        const oy = Math.sin(b.a) * b.ry;
+        const front = Math.sin(b.a); // below the well = nearer to us
+        const k = (1 + 0.16 * front) * (b.r / PORTRAIT_R) / TEX_SCALE;
+        const q = Math.sin(b.wob) * 0.04;
+        b.img.setPosition(CX + ox * Math.cos(tilt) - oy * Math.sin(tilt), CY + ox * Math.sin(tilt) + oy * Math.cos(tilt));
+        b.img.setScale(k * (1 + q), k * (1 - q));
+        b.img.setDepth(front > 0 ? 12 : 8).setAlpha(0.7 + 0.3 * (front + 1) / 2);
+      }
+    };
+    this.events.on('update', step);
+    this.homeStep = step;
+  },
+
   closeHome() {
     for (const o of this.homeItems || []) {
       this.tweens.killTweensOf(o);
       o.destroy();
     }
+    if (this.homeStep) this.events.off('update', this.homeStep);
+    this.homeStep = null;
     this.homeItems = null;
   },
 
@@ -215,11 +319,11 @@ export const MenuMixin = {
       items.push(o.setDepth(OVERLAY));
       return o;
     };
-    const close = () => items.forEach((o) => o.destroy());
+    const close = () => this.closePanel(items);
     add(this.text(W / 2, 512, 'START OVER?', 40).setOrigin(0.5));
-    add(this.text(W / 2, 566, 'The game you left will be lost', 22, '#d6ccff').setOrigin(0.5));
+    add(this.text(W / 2, 566, 'The game you left will be lost', 22, this.pal.light).setOrigin(0.5));
     items.push(
-      this.button(W / 2, 660, 360, 84, mode === 'daily' ? 'PLAY DAILY' : 'NEW GAME', 0x4c6ef5, () => {
+      this.button(W / 2, 660, 360, 84, mode === 'daily' ? 'PLAY DAILY' : 'NEW GAME', this.pal.button2, () => {
         close();
         Meta.clearSavedGame();
         this.startGame(mode);
@@ -368,18 +472,15 @@ export const MenuMixin = {
     };
     add(this.text(W / 2, 372, 'PAUSED', 50).setOrigin(0.5));
     items.push(
-      this.button(W / 2, 486, 400, 92, '▶  RESUME', 0x37b24d, () => {
-        items.forEach((o) => o.destroy());
-        resume();
-      }, 34),
+      this.button(W / 2, 486, 400, 92, '▶  RESUME', 0x37b24d, () => this.closePanel(items, resume), 34, { breathe: true }),
     );
-    items.push(this.button(W / 2, 598, 400, 76, 'RESTART', 0x4c6ef5, () => this.leaveGame(true), 28));
-    items.push(this.button(W / 2, 694, 400, 76, 'HOME', 0x3b5bdb, () => this.leaveGame(false), 28));
+    items.push(this.button(W / 2, 598, 400, 76, 'RESTART', this.pal.button2, () => this.leaveGame(true), 28));
+    items.push(this.button(W / 2, 694, 400, 76, 'HOME', this.pal.button, () => this.leaveGame(false), 28));
     // settings that last between games
     const toggle = (x, name, key, apply) => {
       const label = () => `${name}: ${store.get(key, true) ? 'ON' : 'OFF'}`;
       items.push(
-        this.button(x, 818, 196, 64, label(), 0x6741d9, (c, text) => {
+        this.button(x, 818, 196, 64, label(), this.pal.button, (c, text) => {
           const on = !store.get(key, true);
           store.set(key, on);
           apply(on);
@@ -449,15 +550,15 @@ export const MenuMixin = {
       items.push(o.setDepth(OVERLAY));
       return o;
     };
-    const close = () => items.forEach((o) => o.destroy());
+    const close = () => this.closePanel(items);
     add(this.text(W / 2, 312, 'DAILY CHALLENGE', 40).setOrigin(0.5));
-    add(this.text(W / 2, 360, daily.date, 20, '#b9a8e6').setOrigin(0.5));
+    add(this.text(W / 2, 360, daily.date, 20, this.pal.soft).setOrigin(0.5));
     add(this.text(W / 2, 450, daily.rule.name, 46, '#ffcf8a').setOrigin(0.5));
-    add(this.text(W / 2, 506, daily.rule.text, 22, '#e6deff').setOrigin(0.5));
+    add(this.text(W / 2, 506, daily.rule.text, 22, this.pal.light).setOrigin(0.5));
     const g = daily.goal;
     const goal = this.seen.includes(g) ? `Make a ${TIERS[g].name}` : `Reach body no. ${g + 1} of the chain`;
     add(this.text(W / 2, 572, `Goal: ${goal}`, 24).setOrigin(0.5));
-    add(this.text(W / 2, 618, 'Same planets, same order for everyone today', 18, '#9f8fd0').setOrigin(0.5));
+    add(this.text(W / 2, 618, 'Same planets, same order for everyone today', 18, this.pal.faint).setOrigin(0.5));
     if (rec.done) {
       add(this.text(W / 2, 672, 'Done today ✓', 26, '#8ce99a').setOrigin(0.5));
     } else {
@@ -468,34 +569,35 @@ export const MenuMixin = {
       this.button(W / 2, 780, 400, 96, '▶  PLAY', 0xf08c2e, () => {
         close();
         this.confirmNewGame('daily');
-      }, 38),
+      }, 38, { breathe: true }),
     );
-    items.push(this.button(W / 2, 892, 260, 68, 'CLOSE', 0x4c6ef5, close, 26));
+    items.push(this.button(W / 2, 892, 260, 68, 'CLOSE', this.pal.button2, close, 26));
   },
 
   // ---------- the shop ----------
 
   /** tab: 'skin' (planets), 'theme' (backgrounds) or 'gems' (diamond packs). */
-  openShop(tab = 'skin') {
+  openShop(tab = 'skin', pop = true) {
     const W = this.W;
-    const items = this.panel(28, 132, W - 56, 1030);
+    const items = this.panel(28, 132, W - 56, 1030, pop);
     const add = (o) => {
       items.push(o.setDepth(OVERLAY));
       return o;
     };
     const close = () => {
-      items.forEach((o) => o.destroy());
+      this.closePanel(items);
       this.previewJobs = [];
     };
     const reopen = (t = tab) => {
-      close();
-      this.openShop(t);
+      items.forEach((o) => o.destroy());
+      this.previewJobs = [];
+      this.openShop(t, false);
     };
     add(this.text(W / 2, 186, 'SHOP', 42).setOrigin(0.5));
     const tabs = [['skin', 'PLANETS'], ['theme', 'SKIES'], ['gems', 'DIAMONDS']];
     const tabBtns = {};
     tabs.forEach(([id, label], i) => {
-      const b = this.button(W / 2 + (i - 1) * 210, 256, 198, 62, label, id === tab ? 0x7a4fd8 : 0x33246e, () => id !== tab && reopen(id), 22);
+      const b = this.button(W / 2 + (i - 1) * 210, 256, 198, 62, label, id === tab ? this.pal.button : this.pal.card, () => id !== tab && reopen(id), 22);
       if (id !== tab) b.label.setAlpha(0.7);
       tabBtns[id] = b;
       items.push(b);
@@ -503,19 +605,19 @@ export const MenuMixin = {
     const ctx = { items, add, close, reopen, tabBtns };
     if (tab === 'gems') this.shopGems(ctx);
     else this.shopLooks(tab, ctx);
-    items.push(this.button(W / 2, 1090, 260, 66, 'CLOSE', 0x4c6ef5, close, 26));
+    items.push(this.button(W / 2, 1090, 260, 66, 'CLOSE', this.pal.button2, close, 26));
   },
 
   /** A row in the shop: a card with a picture on the left, a name, a line about it and a button. */
   shopRow(ctx, y, h, highlight) {
     const W = this.W;
     const g = ctx.add(this.add.graphics());
-    g.fillStyle(highlight ? 0x3d2a85 : 0x1b0e3d, 1);
+    g.fillStyle(highlight ? this.pal.cardOn : this.pal.card, 0.82);
     g.fillRoundedRect(48, y - h / 2, W - 96, h, 20);
-    if (highlight) {
-      g.lineStyle(3, 0x8ce99a, 1);
-      g.strokeRoundedRect(48, y - h / 2, W - 96, h, 20);
-    }
+    g.fillStyle(0xffffff, 0.06);
+    g.fillRoundedRect(60, y - h / 2 + 5, W - 120, 22, 11);
+    g.lineStyle(highlight ? 3 : 1.5, highlight ? 0x8ce99a : 0xffffff, highlight ? 1 : 0.12);
+    g.strokeRoundedRect(48, y - h / 2, W - 96, h, 20);
   },
 
   /** A buy button showing a diamond and the price. */
@@ -554,20 +656,20 @@ export const MenuMixin = {
         frame.strokeRoundedRect(55, y - 50, 150, 100, 10);
       }
       ctx.add(this.text(234, y - 30, def.name, 26).setOrigin(0, 0.5));
-      ctx.add(this.text(234, y + 16, def.text, 16, '#c9bdf0').setOrigin(0, 0.5).setWordWrapWidth(272));
+      ctx.add(this.text(234, y + 16, def.text, 16, this.pal.soft).setOrigin(0, 0.5).setWordWrapWidth(272));
       const bx = W - 128;
       if (inUse) {
         const b = this.button(bx, y, 132, 56, 'IN USE', 0x2f9e44, () => {}, 20);
         ctx.items.push(b);
       } else if (owned) {
-        ctx.items.push(this.button(bx, y, 132, 56, 'USE', 0x4c6ef5, () => this.useLook(type, def.id), 22));
+        ctx.items.push(this.button(bx, y, 132, 56, 'USE', this.pal.button2, () => this.useLook(type, def.id), 22));
       } else {
         ctx.items.push(
           this.priceButton(bx, y, def.price, () => {
             if (!Meta.spendGems(def.price)) {
               this.floatText(bx - 40, y - 46, 'Not enough diamonds', '#ff9fb2', 22);
               Sfx.bonk();
-              this.tweens.add({ targets: ctx.tabBtns.gems, scale: { from: 1.15, to: 1 }, duration: 400, ease: 'Back.out' });
+              this.jelly.pop(ctx.tabBtns.gems, 0.12);
               return;
             }
             Meta.own(type, def.id);
@@ -624,7 +726,7 @@ export const MenuMixin = {
       );
     });
     ctx.add(
-      this.text(W / 2, 948, 'Diamonds also drop now and then when planets merge.\nThe bigger the planet, the better the chance.', 19, '#b9a8e6')
+      this.text(W / 2, 948, 'Diamonds also drop now and then when planets merge.\nThe bigger the planet, the better the chance.', 19, this.pal.soft)
         .setOrigin(0.5)
         .setAlign('center'),
     );

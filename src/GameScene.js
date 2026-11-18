@@ -17,6 +17,7 @@ import {
 } from './art.js';
 import { Meta } from './meta.js';
 import { buildSky } from './backgrounds.js';
+import { JellyUi, jellySlab, jellyBubble } from './jelly.js';
 import { Planet, CORE, DRAG } from './Planet.js';
 import { PlanetBatch } from './PlanetBatch.js';
 import { nativeReady } from './native.js';
@@ -41,6 +42,7 @@ const STEP = 1000 / 60;
 const STEP2 = STEP * STEP;
 const GRAVITY = 0.15; // pull toward the centre, in px per step^2
 const DROP_SPEED = 0.6; // a tap lets the planet go almost at rest: gravity does the rest
+const ZERO_G_DROP = 4; // in zero gravity there is no pull, so a tap gives it a push
 const MIN_SPEED = 3; // launch speed range for a pull, in px per step
 const MAX_SPEED = 28;
 const PULL_DEAD = 18; // a drag shorter than this is a tap, not a pull
@@ -219,6 +221,7 @@ export class GameScene extends Phaser.Scene {
     this.nextHeldAt = 0;
     this.acc = 0;
     this.slowUntil = 0;
+    this.hitStopUntil = 0;
     this.calmUntil = 0;
     this.gravBoostUntil = 0;
     this.worldRot = 0;
@@ -264,6 +267,7 @@ export class GameScene extends Phaser.Scene {
     this.bannerQueue = [];
     this.bannerBusy = false;
 
+    this.jelly = new JellyUi(this); // everything tappable is jelly
     this.drawBackground();
     this.ringLayer = this.add.container(CX, CY).setDepth(9); // field decoration: turns, never scales
     this.backLayer = this.add.container(CX, CY).setDepth(10);
@@ -381,18 +385,17 @@ export class GameScene extends Phaser.Scene {
    * A button that only reacts when the press also started on it, so a pull that happens
    * to end over a button does not trigger it.
    */
-  tappable(obj, onTap, pressScale = 0.94) {
+  tappable(obj, onTap, { target = obj, breathe = false, glow = null, soft = false } = {}) {
     obj.setInteractive({ useHandCursor: true });
+    // it is jelly: it wobbles under the pointer, squashes when pressed and bounces back
+    this.jelly.add(target, { source: obj, breathe, glow, soft });
     obj.on('pointerdown', () => {
       obj.pressed = true;
-      if (pressScale !== 1) obj.setScale(pressScale);
     });
     obj.on('pointerout', () => {
       obj.pressed = false;
-      if (pressScale !== 1) obj.setScale(1);
     });
     obj.on('pointerup', () => {
-      if (pressScale !== 1) obj.setScale(1);
       if (!obj.pressed) return;
       obj.pressed = false;
       if (this.targeting && obj !== this.targetingBtn) this.cancelTargeting();
@@ -628,24 +631,25 @@ export class GameScene extends Phaser.Scene {
     ui.push(this.universeText);
 
     // next planet; tap to swap
-    ui.push(this.text(W - 40, 36, 'NEXT', 20, '#b9a8e6').setOrigin(1, 0));
+    ui.push(this.text(W - 40, 36, 'NEXT', 20, this.pal.soft).setOrigin(1, 0));
     const nx = W - 92;
     const ny = 104;
-    const zone = this.add.circle(nx, ny, 46, 0xffffff, 0.08).setDepth(UI);
-    this.tappable(zone, () => this.swap(), 1);
-    this.nextIcon = this.portrait(nx, ny, 0, 28).setDepth(UI);
-    ui.push(zone, this.nextIcon, this.text(nx, 153, 'tap to swap', 14, '#8f7fc2').setOrigin(0.5, 0));
+    const bubble = this.add.image(0, 0, jellyBubble(this, 46, this.pal.card, 0.5)).setScale(1 / TEX_SCALE);
+    this.nextIcon = this.portrait(0, 0, 0, 28);
+    const next = this.add.container(nx, ny, [bubble, this.nextIcon]).setDepth(UI);
+    next.setSize(96, 96);
+    this.tappable(next, () => this.swap());
+    this.nextBox = next;
+    ui.push(next, this.text(nx, 153, 'tap to swap', 14, this.pal.faint).setOrigin(0.5, 0));
 
     // pause, at the top in the middle
     const pg = this.add.graphics();
-    pg.fillStyle(0xffffff, 0.12);
-    pg.fillCircle(0, 0, 30);
-    pg.fillStyle(0xffffff, 0.9);
-    pg.fillRoundedRect(-10, -12, 7, 24, 2);
-    pg.fillRoundedRect(3, -12, 7, 24, 2);
-    const pause = this.add.container(W / 2, 58, [pg]).setDepth(UI);
-    pause.setSize(64, 64);
-    this.tappable(pause, () => this.openPause(), 0.9);
+    pg.fillStyle(0xffffff, 0.92);
+    pg.fillRoundedRect(-10, -12, 7, 24, 3);
+    pg.fillRoundedRect(3, -12, 7, 24, 3);
+    const pause = this.add.container(W / 2, 58, [this.add.image(0, 0, jellyBubble(this, 31, this.pal.button, 0.6)).setScale(1 / TEX_SCALE), pg]).setDepth(UI);
+    pause.setSize(66, 66);
+    this.tappable(pause, () => this.openPause());
     ui.push(pause);
 
     this.comboText = this.text(W / 2, 232, '', 40, '#ffd93d').setOrigin(0.5).setAlpha(0).setDepth(FX + 2).setStroke('#3a2490', 8);
@@ -660,14 +664,12 @@ export class GameScene extends Phaser.Scene {
   }
 
   boosterButton(x, y, iconKey, iconScale, label, onTap) {
-    const bg = this.add.graphics();
-    bg.fillStyle(0x1b0e3d, 1);
-    bg.fillRoundedRect(-52, -44, 104, 100, 22);
-    bg.fillStyle(0x3d2a85, 1);
-    bg.fillRoundedRect(-52, -50, 104, 100, 22);
+    const slab = jellySlab(this, 104, 100, this.pal.cardOn, 0.92);
+    const bg = this.add.image(0, 0, slab.key).setOrigin(0.5, slab.oy).setScale(1 / TEX_SCALE);
+    const glow = this.add.image(0, 0, slab.key).setOrigin(0.5, slab.oy).setScale(1 / TEX_SCALE).setBlendMode(Phaser.BlendModes.ADD).setAlpha(0);
     const ring = this.add.graphics();
     const icon = this.add.image(0, -9, iconKey).setScale(iconScale / TEX_SCALE);
-    const name = this.add.text(0, 33, label, { fontFamily: FONT, fontSize: 13, color: '#cfc4ff', fontStyle: 'bold' }).setOrigin(0.5).setResolution(TEX_SCALE);
+    const name = this.add.text(0, 33, label, { fontFamily: FONT, fontSize: 13, color: this.pal.light, fontStyle: 'bold' }).setOrigin(0.5).setResolution(TEX_SCALE);
     const badgeBg = this.add.graphics();
     const badge = this.add.text(40, -42, '', { fontFamily: FONT, fontSize: 18, color: '#ffffff', fontStyle: 'bold' }).setOrigin(0.5).setResolution(TEX_SCALE);
     const lock = this.add.graphics();
@@ -677,16 +679,20 @@ export class GameScene extends Phaser.Scene {
     lock.beginPath();
     lock.arc(0, -14, 8, Math.PI, 0, false);
     lock.strokePath();
-    lock.fillStyle(0x3d2a85, 1);
+    lock.fillStyle(this.pal.cardOn, 1);
     lock.fillCircle(0, -5, 3);
     lock.setVisible(false);
-    const c = this.add.container(x, y, [bg, ring, icon, name, badgeBg, badge, lock]).setDepth(UI);
+    const c = this.add.container(x, y, [bg, glow, ring, icon, name, badgeBg, badge, lock]).setDepth(UI);
     c.setSize(104, 100);
     c.boosterName = label;
-    this.tappable(c, () => {
-      Sfx.click();
-      onTap();
-    });
+    this.tappable(
+      c,
+      () => {
+        Sfx.click();
+        onTap();
+      },
+      { glow },
+    );
     /** left: uses remaining; ad: an ad can add one; locked: not unlocked yet. */
     c.setState = (left, ad, locked = false) => {
       badgeBg.clear();
@@ -734,11 +740,12 @@ export class GameScene extends Phaser.Scene {
     // album strip: only the bodies found so far. Nothing about what is still hidden is shown,
     // not even that there is more. Tap for the album.
     this.stripY = 1096;
-    this.stripPanel = this.add.graphics().setDepth(UI);
+    this.stripPanel = this.add.graphics();
+    this.strip = TIERS.map(() => this.add.image(0, 0, 'dot').setVisible(false));
+    this.stripBox = this.add.container(W / 2, this.stripY, [this.stripPanel, ...this.strip]).setDepth(UI);
     const zone = this.add.zone(W / 2, this.stripY, W - 40, 56);
-    this.tappable(zone, () => this.openAlbum(), 1);
-    this.strip = TIERS.map(() => this.add.image(0, this.stripY, 'dot').setDepth(UI).setVisible(false));
-    this.gameUi.push(...Object.values(this.btn), this.stripPanel, zone);
+    this.tappable(zone, () => this.openAlbum(), { target: this.stripBox, soft: true });
+    this.gameUi.push(...Object.values(this.btn), this.stripBox, zone);
     this.gameUiOn = true;
     this.refreshStrip();
   }
@@ -762,12 +769,16 @@ export class GameScene extends Phaser.Scene {
     found.forEach((tier, i) => {
       const img = this.strip[i];
       if (img.texture.key !== portraitKey(tier)) img.setTexture(portraitKey(tier)).setScale(14 / PORTRAIT_R / TEX_SCALE);
-      img.setPosition(x0 + i * cell, this.stripY).setVisible(true);
+      img.setPosition(x0 + i * cell - W / 2, 0).setVisible(true);
     });
     const w = (n - 1) * cell + 64;
     this.stripPanel.clear();
+    this.stripPanel.fillStyle(this.pal.card, 0.55);
+    this.stripPanel.fillRoundedRect(-w / 2, -26, w, 52, 26);
     this.stripPanel.fillStyle(0xffffff, 0.07);
-    this.stripPanel.fillRoundedRect(W / 2 - w / 2, this.stripY - 26, w, 52, 26);
+    this.stripPanel.fillRoundedRect(-w / 2 + 14, -23, w - 28, 18, 9);
+    this.stripPanel.lineStyle(1.5, 0xffffff, 0.14);
+    this.stripPanel.strokeRoundedRect(-w / 2, -26, w, 52, 26);
   }
 
   // ---------- aiming and launching ----------
@@ -985,7 +996,9 @@ export class GameScene extends Phaser.Scene {
     const dx = CX - b.x;
     const dy = CY - b.y;
     const d = Math.hypot(dx, dy) || 1;
-    const speed = power > 0 ? MIN_SPEED + (MAX_SPEED - MIN_SPEED) * Math.pow(power, 1.2) : DROP_SPEED;
+    // in zero gravity a tap would only float; it drifts in at a gentle pace instead
+    const floating = this.zeroG && !this.zeroG.returned;
+    const speed = power > 0 ? MIN_SPEED + (MAX_SPEED - MIN_SPEED) * Math.pow(power, 1.2) : floating ? ZERO_G_DROP : DROP_SPEED;
     this.matter.body.setVelocity(b.body, { x: (dx / d) * speed, y: (dy / d) * speed });
     b.body.frictionAir = FLIGHT_DRAG; // no drag in flight, so the power you pull is the power that lands
     b.flying = true;
@@ -1918,6 +1931,7 @@ export class GameScene extends Phaser.Scene {
       B.squash(ang, Math.min(MAX_SQUASH, base * mA));
     }
     for (const p of [A, B]) if (p.flying) this.land(p, closing);
+    if (this.zeroG) this.slamHit(A, B, closing);
   }
 
   /** A launched planet's first contact: normal drag from now on, and feedback that scales with the hit. */
@@ -1958,7 +1972,7 @@ export class GameScene extends Phaser.Scene {
     store.set('jd3_comet', true);
     this.refreshBoosters();
     this.banner('NEW BOOSTER: COMET', 'Tap a planet to upgrade it', '#7fe3ff', 'comet');
-    this.tweens.add({ targets: this.cometBtn, scale: { from: 1.35, to: 1 }, duration: 600, ease: 'Back.out' });
+    this.jelly.pop(this.cometBtn, 0.14);
     Sfx.unlock();
   }
 
@@ -2184,16 +2198,24 @@ export class GameScene extends Phaser.Scene {
     const tx = picW / 2;
     t1.x = tx;
     t2.x = tx;
+    // a jelly card in the sky's colours, rimmed in the banner's own colour
     const bg = this.add.graphics();
-    bg.fillStyle(0x0b0524, 0.9);
+    bg.fillStyle(shade(this.pal.panel, 0.6), 0.92);
+    bg.fillRoundedRect(-w / 2, -64, w, 140, 28);
+    bg.fillStyle(this.pal.panel, 0.94);
     bg.fillRoundedRect(-w / 2, -70, w, 140, 28);
+    bg.fillStyle(this.pal.panelTop, 0.14);
+    bg.fillRoundedRect(-w / 2 + 5, -65, w - 10, 62, 24);
+    bg.fillStyle(0xffffff, 0.08);
+    bg.fillRoundedRect(-w / 2 + 22, -64, w - 44, 22, 11);
     bg.lineStyle(4, Phaser.Display.Color.HexStringToColor(color).color, 0.9);
     bg.strokeRoundedRect(-w / 2, -70, w, 140, 28);
     const items = [bg];
     if (hasPic) items.push(this.portrait(-w / 2 + 64, 0, kind, 40));
     items.push(t1, t2);
     const c = this.add.container(W / 2, y - 60, items).setDepth(60).setAlpha(0);
-    this.tweens.add({ targets: c, y, alpha: 1, duration: 260, ease: 'Back.out' });
+    this.jelly.add(c);
+    this.tweens.add({ targets: c, y, alpha: 1, duration: 240, ease: 'Quad.in', onComplete: () => this.jelly.wobble(c, 0.12) });
     // it stays about two seconds, or makes way sooner when another one is waiting
     const shownAt = this.time.now;
     const check = this.time.addEvent({
@@ -2247,7 +2269,8 @@ export class GameScene extends Phaser.Scene {
     if (crunch || this.state === 'aim' || this.state === 'flying') {
       this.worldRot += ((WORLD_SPIN * this.spinMul * Math.min(delta, 50)) / 1000) * (crunch ? 5 : 1);
       // time slows right down while a target is being picked, and briefly on big merges
-      rate = this.targeting ? 0.15 : now < this.slowUntil ? 0.3 : 1;
+      // a moment of stillness on a blast, slow motion while a target is picked and on big merges
+      rate = now < this.hitStopUntil ? 0 : this.targeting ? 0.15 : now < this.slowUntil ? 0.3 : 1;
       this.acc += Math.min(delta, 50) * rate;
       let steps = 0;
       while (this.acc >= STEP && steps < 3) {
@@ -2281,6 +2304,8 @@ export class GameScene extends Phaser.Scene {
     this.drawFusion(now);
     this.drawVortex(now);
     this.drawAbilities(now);
+    this.drawBombs(now);
+    this.drawZeroG(now);
     this.drawDanger(now);
     this.drawBeam(now);
     this.skinTrail(now);
@@ -2470,14 +2495,17 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
-  button(x, y, w, h, label, color, onClick, fontSize = 30) {
-    const bg = this.add.graphics();
-    bg.fillStyle(shade(color, 0.7), 1);
-    bg.fillRoundedRect(-w / 2, -h / 2 + 6, w, h, 20);
-    bg.fillStyle(color, 1);
-    bg.fillRoundedRect(-w / 2, -h / 2, w, h, 20);
-    const text = this.add.text(0, 0, label, { fontFamily: FONT, fontSize, color: '#ffffff', fontStyle: 'bold' }).setOrigin(0.5).setResolution(TEX_SCALE);
-    const c = this.add.container(x, y, [bg, text]).setDepth(OVERLAY);
+  /** A jelly button. breathe: the main call to action swells gently at rest. */
+  button(x, y, w, h, label, color, onClick, fontSize = 30, { breathe = false } = {}) {
+    const slab = jellySlab(this, w, h, color);
+    const bg = this.add.image(0, 0, slab.key).setOrigin(0.5, slab.oy).setScale(1 / TEX_SCALE);
+    const glow = this.add.image(0, 0, slab.key).setOrigin(0.5, slab.oy).setScale(1 / TEX_SCALE).setBlendMode(Phaser.BlendModes.ADD).setAlpha(0);
+    const text = this.add
+      .text(0, -1, label, { fontFamily: FONT, fontSize, color: '#ffffff', fontStyle: 'bold' })
+      .setOrigin(0.5)
+      .setResolution(TEX_SCALE)
+      .setShadow(0, 2, 'rgba(0,0,0,0.28)', 3, false, true);
+    const c = this.add.container(x, y, [bg, glow, text]).setDepth(OVERLAY);
     c.setSize(w, h);
     this.tappable(
       c,
@@ -2485,20 +2513,101 @@ export class GameScene extends Phaser.Scene {
         Sfx.click();
         onClick(c, text);
       },
-      0.96,
+      { breathe, glow },
     );
     c.label = text;
     return c;
   }
 
-  panel(x, y, w, h) {
-    const dim = this.add.rectangle(W / 2, H / 2, W * 3, H * 3, 0x05020f, 0.8).setInteractive().setDepth(OVERLAY);
+  /**
+   * A panel of see-through jelly in the colours of the sky, over a tinted veil that lets the
+   * moving sky show through. It pops open with a wobble. Returns the list its contents join.
+   */
+  panel(x, y, w, h, pop = true) {
+    const pal = this.pal;
+    const dim = this.add.rectangle(W / 2, H / 2, W * 3, H * 3, pal.dim, 0.62).setInteractive().setDepth(OVERLAY);
     const g = this.add.graphics().setDepth(OVERLAY);
-    g.fillStyle(0x2a1a66, 1);
+    for (const [grow, a] of [[16, 0.04], [9, 0.07], [4, 0.1]]) {
+      g.fillStyle(pal.rim, a);
+      g.fillRoundedRect(x - grow, y - grow, w + grow * 2, h + grow * 2, 36 + grow);
+    }
+    g.fillStyle(shade(pal.panel, 0.62), 0.92);
+    g.fillRoundedRect(x, y + 8, w, h, 36);
+    g.fillStyle(pal.panel, 0.9);
     g.fillRoundedRect(x, y, w, h, 36);
-    g.lineStyle(4, 0xffffff, 0.15);
+    // lighter toward the top, like light through jelly
+    for (const [f, a] of [[0.55, 0.08], [0.36, 0.09], [0.18, 0.1]]) {
+      g.fillStyle(pal.panelTop, a);
+      g.fillRoundedRect(x + 6, y + 6, w - 12, h * f, 30);
+    }
+    g.fillStyle(0xffffff, 0.08);
+    g.fillRoundedRect(x + 24, y + 10, w - 48, 30, 15);
+    g.lineStyle(3, 0xffffff, 0.14);
     g.strokeRoundedRect(x, y, w, h, 36);
-    return [dim, g];
+    g.fillStyle(0xffffff, 0.28);
+    g.fillCircle(x + w - 40, y + h - 38, 6);
+    g.fillCircle(x + w - 58, y + h - 24, 3.5);
+    const items = [dim, g];
+    if (pop) this.popPanel(items, x + w / 2, y + h / 2);
+    return items;
+  }
+
+  /**
+   * Opens a panel like jelly being set down: it swells past its size, squashes and settles. Works
+   * on everything in `items`, including what is added to it later in the same moment.
+   */
+  popPanel(items, cx, cy) {
+    const dimAlpha = items[0].alpha;
+    const state = { t: 0 };
+    const apply = (t, done = false) => {
+      const s = done ? 1 : 1 - 0.15 * Math.exp(-7 * t) * Math.cos(t * 15);
+      const q = done ? 0 : 0.07 * Math.exp(-6 * t) * Math.sin(t * 17);
+      const sx = s * (1 + q);
+      const sy = s * (1 - q);
+      const a = done ? 1 : Math.min(1, t * 7);
+      items[0].setAlpha(dimAlpha * (done ? 1 : Math.min(1, t * 5)));
+      for (let i = 1; i < items.length; i++) {
+        const o = items[i];
+        if (!o.active) continue;
+        if (!o.popFrom) o.popFrom = { x: o.x, y: o.y, sx: o.scaleX, sy: o.scaleY, a: o.alpha };
+        const b = o.popFrom;
+        o.setPosition(cx + (b.x - cx) * sx, cy + (b.y - cy) * sy);
+        o.setScale(b.sx * sx, b.sy * sy);
+        o.setAlpha(b.a * a);
+        if (done) delete o.popFrom;
+      }
+    };
+    apply(0);
+    this.tweens.add({ targets: state, t: 1, duration: 620, onUpdate: () => apply(state.t), onComplete: () => apply(1, true) });
+  }
+
+  /** Closes a panel: it shrinks a little and fades, then is gone. then: called straight away. */
+  closePanel(items, then = null) {
+    for (const o of items) if (o.input) o.disableInteractive();
+    const state = { t: 0 };
+    const from = items.map((o) => ({ o, x: o.x, y: o.y, sx: o.scaleX, sy: o.scaleY, a: o.alpha }));
+    const g = items[1];
+    const bounds = g && g.getBounds ? g.getBounds() : null;
+    const cx = bounds && bounds.width ? bounds.centerX : W / 2;
+    const cy = bounds && bounds.height ? bounds.centerY : H / 2;
+    this.tweens.add({
+      targets: state,
+      t: 1,
+      duration: 170,
+      ease: 'Quad.in',
+      onUpdate: () => {
+        const k = 1 - 0.1 * state.t;
+        for (const f of from) {
+          if (!f.o.active) continue;
+          f.o.setAlpha(f.a * (1 - state.t));
+          if (f.o === items[0]) continue;
+          f.o.setPosition(cx + (f.x - cx) * k, cy + (f.y - cy) * k);
+          f.o.setScale(f.sx * k, f.sy * k);
+        }
+      },
+      onComplete: () => items.forEach((o) => o.destroy()),
+    });
+    if (then) then();
   }
 
   showGameOver() {
@@ -2515,7 +2624,7 @@ export class GameScene extends Phaser.Scene {
     add(this.portrait(W / 2, 470, this.biggest, 52));
     add(this.text(W / 2, 562, TIERS[this.biggest].name, 34).setOrigin(0.5));
     add(
-      this.text(W / 2, 600, this.newRecord ? 'NEW RECORD!' : `${this.seen.length} discovered`, 20, this.newRecord ? '#8ce99a' : '#b9a8e6').setOrigin(0.5),
+      this.text(W / 2, 600, this.newRecord ? 'NEW RECORD!' : `${this.seen.length} discovered`, 20, this.newRecord ? '#8ce99a' : this.pal.soft).setOrigin(0.5),
     );
     if (this.runGems > 0) {
       const t = add(this.text(W / 2 + 16, 646, `+${this.runGems} found`, 24, '#9ff3ff').setOrigin(0.5));
@@ -2531,7 +2640,7 @@ export class GameScene extends Phaser.Scene {
         this.state = 'busy';
         const ok = free || (await Ads.showRewarded());
         if (ok) {
-          items.forEach((o) => o.destroy());
+          this.closePanel(items);
           this.revive();
         } else {
           this.state = 'over';
@@ -2540,7 +2649,7 @@ export class GameScene extends Phaser.Scene {
       items.push(revive);
       y += 112;
     }
-    const again = this.button(W / 2, y, 440, 92, 'PLAY AGAIN', 0x4c6ef5, async () => {
+    const again = this.button(W / 2, y, 440, 92, 'PLAY AGAIN', this.pal.button2, async () => {
       if (this.state !== 'over') return;
       this.state = 'busy';
       await Ads.betweenGames();
@@ -2548,7 +2657,7 @@ export class GameScene extends Phaser.Scene {
     });
     items.push(again);
     y += 100;
-    const home = this.button(W / 2, y, 440, 64, 'HOME', 0x3b5bdb, async () => {
+    const home = this.button(W / 2, y, 440, 64, 'HOME', this.pal.button, async () => {
       if (this.state !== 'over') return;
       this.state = 'busy';
       await Ads.betweenGames();
@@ -2657,6 +2766,7 @@ export class GameScene extends Phaser.Scene {
       this.scatterUntil += pausedFor;
       this.fusionUntil += pausedFor;
       this.slowUntil += pausedFor;
+      this.hitStopUntil += pausedFor;
       this.nextPairAt = (this.nextPairAt || 0) + pausedFor;
       if (this.vortex) {
         this.vortex.born += pausedFor;
@@ -2698,7 +2808,7 @@ export class GameScene extends Phaser.Scene {
       return o;
     };
     add(this.text(W / 2, top + 58, 'STAR ALBUM', 44).setOrigin(0.5));
-    add(this.text(W / 2, top + 106, `${found.length} discovered`, 22, '#b9a8e6').setOrigin(0.5));
+    add(this.text(W / 2, top + 106, `${found.length} discovered`, 22, this.pal.soft).setOrigin(0.5));
     const cardAt = (i) => {
       const row = Math.floor(i / cols);
       const inRow = Math.min(cols, cards - row * cols);
@@ -2709,10 +2819,7 @@ export class GameScene extends Phaser.Scene {
       add(this.portrait(x, y, tier, 34));
       add(this.text(x, y + 58, TIERS[tier].name, 20).setOrigin(0.5));
     });
-    const close = this.button(W / 2, top + h - 66, 300, 76, 'CLOSE', 0x4c6ef5, () => {
-      items.forEach((o) => o.destroy());
-      resume();
-    });
+    const close = this.button(W / 2, top + h - 66, 300, 76, 'CLOSE', this.pal.button2, () => this.closePanel(items, resume));
     items.push(close);
   }
 }

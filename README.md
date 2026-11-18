@@ -21,6 +21,22 @@ shake things up every so often, and diamonds buy planet skins and backgrounds. T
 (top, middle) leads to resume, restart, home and the sound and vibration settings; leaving the
 app pauses the game too.
 
+## Look and feel
+
+- Everything that can be tapped is jelly: buttons, booster buttons, the pause button, NEXT, the
+  album strip, shop tabs, even the letters of the title. Under the pointer it swells a little and
+  keeps wobbling; pressed, it squashes flat; let go, it springs back with a bounce. The main
+  button on a screen (PLAY or CONTINUE, RESUME, the daily PLAY) breathes gently at rest
+- Buttons are drawn as glossy jelly: lighter on top, a shine across it, two little bubbles
+  inside, a deeper base underneath, and they light up while touched
+- Menus belong to the sky: panels are see-through jelly in the colours of the background in use,
+  over a tinted veil that lets the moving sky show through, and they pop open with a wobble and
+  shrink away when closed. Plain buttons, cards, the booster bar and secondary text take the
+  sky's colours too (teal under the aurora, ember red in the inferno); buttons that mean something
+  keep their own (green to play, orange for the daily challenge, blue for diamonds)
+- The home screen has no dark veil: the name is made of jelly letters in candy colours that drop
+  in and land with a squash, and planets in the skin in use circle the well behind the menu
+
 Boosters only ever come from their per-game allowance: no event, special planet or reward
 hands out extra ones, so the allowance stays a real limit.
 
@@ -43,7 +59,8 @@ The iOS and Android apps are built with Capacitor; see [BUILD.md](BUILD.md).
   continuing, shop, daily challenge, diamonds), `skinfx.js` (each skin's merge burst and trail)
 - `src/meta.js` – what lasts between games: diamonds, purchases, the biggest body ever made,
   today's challenge and the game left unfinished; `src/themes.js` – the skins, backgrounds and
-  diamond packs on sale; `src/backgrounds.js` – the moving skies; `src/daily.js` – the seeded
+  diamond packs on sale, and the interface colours for each sky; `src/backgrounds.js` – the
+  moving skies; `src/jelly.js` – the jelly UI (its springs and its pictures); `src/daily.js` – the seeded
   daily challenge
 - `src/Planet.js` – one planet: a hard physics core wrapped in a springy skin, plus
   the springs that make its picture squash, stretch and wobble
@@ -135,9 +152,13 @@ The iOS and Android apps are built with Capacitor; see [BUILD.md](BUILD.md).
 ## Special planets
 
 Once an Earth has been made, the launcher sometimes gives a Star Bomb (about 3%, shown in NEXT
-and explained the first time it comes): it arms when it lands, flashes faster and faster, then
-blows away the small planets around it (up to Mars, or one step above the smallest the launcher
-gives) and pushes the rest back. A blast sets off other bombs.
+and explained the first time it comes). It arms when it lands and burns down for 1.3 seconds:
+the zone it will clear is drawn round it, the fuse left shows as an arc, sparks fly, the beeps
+get faster, and the small planets in the zone (up to Mars, or one step above the smallest the
+launcher gives) glow red and tremble, so you can see what it will take. Then a beat of stillness,
+a warm flash, a punch of the camera and a shock wave: the planets in the zone burst one after
+another, nearest first, everything else is thrown back, and CLEARED ×N says how many went. A
+blast sets off other bombs.
 
 ## Planet powers
 
@@ -157,8 +178,12 @@ announced with a banner and a countdown under the pause button. Events change th
 none of them gives boosters:
 
 - Meteor Shower (11 s): small planets streak in from outside the ring
-- Zero Gravity (7.5 s): everything drifts apart and floats for 5 seconds, then gravity comes
-  back hard and slams the field together in a new order. No countdown runs meanwhile
+- Zero Gravity (7.5 s): the well goes dark, a wave pushes everything apart and the planets float
+  and tumble in a cool light for 5 seconds. Shots fly straight with nothing pulling them, so
+  floating planets can be knocked into each other like billiard balls. A ring round the well
+  counts the float down, the last three seconds out loud; then gravity comes back hard: a pull
+  closes in from the edges, light streaks into the well and the field slams together in a new
+  order, hard hits sparking and shaking the screen. No countdown runs meanwhile
 
 Merges in quick succession get a cheer (NICE!, GREAT!, AMAZING!, STELLAR!), nothing more.
 

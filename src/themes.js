@@ -1,4 +1,6 @@
-// Things to buy with diamonds: planet skins and backgrounds. Plus the diamond packs.
+// Things to buy with diamonds: planet skins and backgrounds. Plus the diamond packs, and the
+// interface colours that go with each background.
+import { mix as mixColor } from './jelly.js';
 
 // Each skin changes how the planets look (art.js), how they move (squish: wobble strength;
 // upright: the picture never turns; hop: little bounces at rest; flicker: like a neon tube),
@@ -55,4 +57,30 @@ export function applyPageTheme(theme) {
   const el = document.documentElement;
   el.style.backgroundColor = bottom;
   el.style.backgroundImage = [...PAGE_STARS, `linear-gradient(${top}, ${bottom})`].join(', ');
+}
+
+const hexOf = (c) => '#' + c.toString(16).padStart(6, '0');
+
+/**
+ * The interface in the colours of a sky, so the menus and panels belong to the background
+ * instead of sitting on top of it. Plain buttons, panels, cards and secondary text all follow it;
+ * buttons that mean something (play, the daily challenge, diamonds) keep their own colours.
+ */
+export function uiPalette(theme) {
+  const [g0, g1] = theme.glows;
+  const base = mixColor(theme.top, g0, 0.38);
+  return {
+    dim: theme.bottom,
+    panel: mixColor(base, 0x000000, 0.22),
+    panelTop: mixColor(base, 0xffffff, 0.14),
+    rim: mixColor(g0, 0xffffff, 0.35),
+    card: mixColor(theme.bottom, base, 0.6),
+    cardOn: mixColor(base, 0xffffff, 0.1),
+    button: mixColor(g0, theme.top, 0.35),
+    button2: mixColor(g1, theme.top, 0.35),
+    soft: hexOf(mixColor(g0, 0xffffff, 0.62)),
+    faint: hexOf(mixColor(g0, 0xffffff, 0.38)),
+    light: hexOf(mixColor(g0, 0xffffff, 0.84)),
+    stroke: hexOf(mixColor(theme.top, 0x000000, 0.25)),
+  };
 }
