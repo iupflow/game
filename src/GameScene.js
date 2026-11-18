@@ -268,6 +268,7 @@ export class GameScene extends Phaser.Scene {
     this.bannerBusy = false;
 
     this.jelly = new JellyUi(this); // everything tappable is jelly
+    this.openPanels = 0;
     this.drawBackground();
     this.ringLayer = this.add.container(CX, CY).setDepth(9); // field decoration: turns, never scales
     this.backLayer = this.add.container(CX, CY).setDepth(10);
@@ -634,7 +635,7 @@ export class GameScene extends Phaser.Scene {
     ui.push(this.text(W - 40, 36, 'NEXT', 20, this.pal.soft).setOrigin(1, 0));
     const nx = W - 92;
     const ny = 104;
-    const bubble = this.add.image(0, 0, jellyBubble(this, 46, this.pal.card, 0.5)).setScale(1 / TEX_SCALE);
+    const bubble = this.add.image(0, 0, jellyBubble(this, 46, this.pal.cardOn, 0.3)).setScale(1 / TEX_SCALE);
     this.nextIcon = this.portrait(0, 0, 0, 28);
     const next = this.add.container(nx, ny, [bubble, this.nextIcon]).setDepth(UI);
     next.setSize(96, 96);
@@ -647,7 +648,7 @@ export class GameScene extends Phaser.Scene {
     pg.fillStyle(0xffffff, 0.92);
     pg.fillRoundedRect(-10, -12, 7, 24, 3);
     pg.fillRoundedRect(3, -12, 7, 24, 3);
-    const pause = this.add.container(W / 2, 58, [this.add.image(0, 0, jellyBubble(this, 31, this.pal.button, 0.6)).setScale(1 / TEX_SCALE), pg]).setDepth(UI);
+    const pause = this.add.container(W / 2, 58, [this.add.image(0, 0, jellyBubble(this, 30, this.pal.button, 0.34)).setScale(1 / TEX_SCALE), pg]).setDepth(UI);
     pause.setSize(66, 66);
     this.tappable(pause, () => this.openPause());
     ui.push(pause);
@@ -664,7 +665,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   boosterButton(x, y, iconKey, iconScale, label, onTap) {
-    const slab = jellySlab(this, 104, 100, this.pal.cardOn, 0.92);
+    const slab = jellySlab(this, 104, 100, this.pal.cardOn, { r: 22, fill: 0.9 });
     const bg = this.add.image(0, 0, slab.key).setOrigin(0.5, slab.oy).setScale(1 / TEX_SCALE);
     const glow = this.add.image(0, 0, slab.key).setOrigin(0.5, slab.oy).setScale(1 / TEX_SCALE).setBlendMode(Phaser.BlendModes.ADD).setAlpha(0);
     const ring = this.add.graphics();
@@ -2200,15 +2201,11 @@ export class GameScene extends Phaser.Scene {
     t2.x = tx;
     // a jelly card in the sky's colours, rimmed in the banner's own colour
     const bg = this.add.graphics();
-    bg.fillStyle(shade(this.pal.panel, 0.6), 0.92);
-    bg.fillRoundedRect(-w / 2, -64, w, 140, 28);
-    bg.fillStyle(this.pal.panel, 0.94);
+    bg.fillStyle(this.pal.panel, 0.82);
     bg.fillRoundedRect(-w / 2, -70, w, 140, 28);
-    bg.fillStyle(this.pal.panelTop, 0.14);
-    bg.fillRoundedRect(-w / 2 + 5, -65, w - 10, 62, 24);
-    bg.fillStyle(0xffffff, 0.08);
-    bg.fillRoundedRect(-w / 2 + 22, -64, w - 44, 22, 11);
-    bg.lineStyle(4, Phaser.Display.Color.HexStringToColor(color).color, 0.9);
+    bg.fillStyle(0xffffff, 0.05);
+    bg.fillRoundedRect(-w / 2 + 2, -68, w - 4, 48, { tl: 26, tr: 26, bl: 6, br: 6 });
+    bg.lineStyle(1.5, Phaser.Display.Color.HexStringToColor(color).color, 0.8);
     bg.strokeRoundedRect(-w / 2, -70, w, 140, 28);
     const items = [bg];
     if (hasPic) items.push(this.portrait(-w / 2 + 64, 0, kind, 40));
@@ -2495,13 +2492,16 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
-  /** A jelly button. breathe: the main call to action swells gently at rest. */
-  button(x, y, w, h, label, color, onClick, fontSize = 30, { breathe = false } = {}) {
-    const slab = jellySlab(this, w, h, color);
+  /**
+   * A glass button that moves like jelly. breathe: the main call to action (it swells gently at
+   * rest and glows); fill: how solid its glass is; textColor: its label's colour.
+   */
+  button(x, y, w, h, label, color, onClick, fontSize = 30, { breathe = false, fill = 1, textColor = '#ffffff' } = {}) {
+    const slab = jellySlab(this, w, h, color, { strong: breathe, fill });
     const bg = this.add.image(0, 0, slab.key).setOrigin(0.5, slab.oy).setScale(1 / TEX_SCALE);
     const glow = this.add.image(0, 0, slab.key).setOrigin(0.5, slab.oy).setScale(1 / TEX_SCALE).setBlendMode(Phaser.BlendModes.ADD).setAlpha(0);
     const text = this.add
-      .text(0, -1, label, { fontFamily: FONT, fontSize, color: '#ffffff', fontStyle: 'bold' })
+      .text(0, -1, label, { fontFamily: FONT, fontSize, color: textColor, fontStyle: 'bold' })
       .setOrigin(0.5)
       .setResolution(TEX_SCALE)
       .setShadow(0, 2, 'rgba(0,0,0,0.28)', 3, false, true);
@@ -2525,30 +2525,22 @@ export class GameScene extends Phaser.Scene {
    */
   panel(x, y, w, h, pop = true) {
     const pal = this.pal;
-    const dim = this.add.rectangle(W / 2, H / 2, W * 3, H * 3, pal.dim, 0.62).setInteractive().setDepth(OVERLAY);
+    const dim = this.add.rectangle(W / 2, H / 2, W * 3, H * 3, pal.dim, 0.58).setInteractive().setDepth(OVERLAY);
     const g = this.add.graphics().setDepth(OVERLAY);
-    for (const [grow, a] of [[16, 0.04], [9, 0.07], [4, 0.1]]) {
-      g.fillStyle(pal.rim, a);
-      g.fillRoundedRect(x - grow, y - grow, w + grow * 2, h + grow * 2, 36 + grow);
-    }
-    g.fillStyle(shade(pal.panel, 0.62), 0.92);
-    g.fillRoundedRect(x, y + 8, w, h, 36);
-    g.fillStyle(pal.panel, 0.9);
-    g.fillRoundedRect(x, y, w, h, 36);
-    // lighter toward the top, like light through jelly
-    for (const [f, a] of [[0.55, 0.08], [0.36, 0.09], [0.18, 0.1]]) {
-      g.fillStyle(pal.panelTop, a);
-      g.fillRoundedRect(x + 6, y + 6, w - 12, h * f, 30);
-    }
-    g.fillStyle(0xffffff, 0.08);
-    g.fillRoundedRect(x + 24, y + 10, w - 48, 30, 15);
-    g.lineStyle(3, 0xffffff, 0.14);
-    g.strokeRoundedRect(x, y, w, h, 36);
-    g.fillStyle(0xffffff, 0.28);
-    g.fillCircle(x + w - 40, y + h - 38, 6);
-    g.fillCircle(x + w - 58, y + h - 24, 3.5);
+    g.fillStyle(pal.panel, 0.86);
+    g.fillRoundedRect(x, y, w, h, 34);
+    // a faint sheen over the top, and a fine edge
+    g.fillStyle(0xffffff, 0.045);
+    g.fillRoundedRect(x + 2, y + 2, w - 4, Math.min(140, h * 0.24), { tl: 32, tr: 32, bl: 8, br: 8 });
+    g.lineStyle(1.5, pal.rim, 0.42);
+    g.strokeRoundedRect(x, y, w, h, 34);
+    g.lineStyle(1, 0xffffff, 0.1);
+    g.strokeRoundedRect(x + 4, y + 4, w - 8, h - 8, 30);
     const items = [dim, g];
     if (pop) this.popPanel(items, x + w / 2, y + h / 2);
+    // the home menu under it steps back while it is open
+    this.openPanels = (this.openPanels || 0) + 1;
+    this.fadeHome(true);
     return items;
   }
 
@@ -2581,8 +2573,15 @@ export class GameScene extends Phaser.Scene {
     this.tweens.add({ targets: state, t: 1, duration: 620, onUpdate: () => apply(state.t), onComplete: () => apply(1, true) });
   }
 
+  /** A panel has gone: when none is left open, the home menu comes back. */
+  panelGone() {
+    this.openPanels = Math.max(0, (this.openPanels || 1) - 1);
+    if (!this.openPanels) this.fadeHome(false);
+  }
+
   /** Closes a panel: it shrinks a little and fades, then is gone. then: called straight away. */
   closePanel(items, then = null) {
+    this.panelGone();
     for (const o of items) if (o.input) o.disableInteractive();
     const state = { t: 0 };
     const from = items.map((o) => ({ o, x: o.x, y: o.y, sx: o.scaleX, sy: o.scaleY, a: o.alpha }));
@@ -2611,7 +2610,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   showGameOver() {
-    const items = this.panel(70, 250, W - 140, 836);
+    const items = this.panel(70, 250, W - 140, 800);
     const add = (o) => {
       items.push(o.setDepth(OVERLAY));
       return o;
@@ -2635,7 +2634,7 @@ export class GameScene extends Phaser.Scene {
     if (!this.revived) {
       // one revive per game: free with Premium, otherwise for an ad
       const free = this.premium;
-      const revive = this.button(W / 2, y, 440, 92, free ? 'REVIVE  (free)' : '▶  REVIVE  (watch ad)', 0x37b24d, async () => {
+      const revive = this.button(W / 2, y, 420, 78, free ? 'REVIVE  (free)' : '▶  REVIVE  (watch ad)', 0x37b24d, async () => {
         if (this.state !== 'over') return;
         this.state = 'busy';
         const ok = free || (await Ads.showRewarded());
@@ -2645,29 +2644,29 @@ export class GameScene extends Phaser.Scene {
         } else {
           this.state = 'over';
         }
-      });
+      }, 28, { breathe: true });
       items.push(revive);
-      y += 112;
+      y += 96;
     }
-    const again = this.button(W / 2, y, 440, 92, 'PLAY AGAIN', this.pal.button2, async () => {
+    const again = this.button(W / 2, y, 420, 68, 'PLAY AGAIN', this.pal.button2, async () => {
       if (this.state !== 'over') return;
       this.state = 'busy';
       await Ads.betweenGames();
       this.scene.restart({ play: true, mode: this.mode });
-    });
+    }, 26);
     items.push(again);
-    y += 100;
-    const home = this.button(W / 2, y, 440, 64, 'HOME', this.pal.button, async () => {
+    y += 84;
+    const home = this.button(W / 2, y, 420, 56, 'HOME', this.pal.button, async () => {
       if (this.state !== 'over') return;
       this.state = 'busy';
       await Ads.betweenGames();
       this.scene.restart({});
-    }, 24);
+    }, 22);
     items.push(home);
-    y += 80;
+    y += 70;
     const testBuild = typeof window !== 'undefined' && window.__TEST_PURCHASE;
     const owned = this.premium ? (testBuild ? 'Premium ✓  (test: tap to undo)' : 'Premium ✓') : 'No Ads + Max Boosters  $2.99';
-    const premium = this.button(W / 2, y, 440, 64, owned, 0x6741d9, async () => {
+    const premium = this.button(W / 2, y, 420, 52, owned, 0x7950f2, async () => {
       if (this.state !== 'over') return;
       if (this.premium) {
         if (!testBuild) return;
@@ -2685,7 +2684,7 @@ export class GameScene extends Phaser.Scene {
         items.forEach((o) => o.destroy());
         this.showGameOver(); // again, now with the free revive
       }
-    }, 22);
+    }, 19);
     items.push(premium);
   }
 
@@ -2819,7 +2818,7 @@ export class GameScene extends Phaser.Scene {
       add(this.portrait(x, y, tier, 34));
       add(this.text(x, y + 58, TIERS[tier].name, 20).setOrigin(0.5));
     });
-    const close = this.button(W / 2, top + h - 66, 300, 76, 'CLOSE', this.pal.button2, () => this.closePanel(items, resume));
+    const close = this.button(W / 2, top + h - 62, 260, 60, 'CLOSE', this.pal.button2, () => this.closePanel(items, resume), 24);
     items.push(close);
   }
 }

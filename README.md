@@ -23,17 +23,20 @@ app pauses the game too.
 
 ## Look and feel
 
-- Everything that can be tapped is jelly: buttons, booster buttons, the pause button, NEXT, the
-  album strip, shop tabs, even the letters of the title. Under the pointer it swells a little and
-  keeps wobbling; pressed, it squashes flat; let go, it springs back with a bounce. The main
-  button on a screen (PLAY or CONTINUE, RESUME, the daily PLAY) breathes gently at rest
-- Buttons are drawn as glossy jelly: lighter on top, a shine across it, two little bubbles
-  inside, a deeper base underneath, and they light up while touched
-- Menus belong to the sky: panels are see-through jelly in the colours of the background in use,
-  over a tinted veil that lets the moving sky show through, and they pop open with a wobble and
-  shrink away when closed. Plain buttons, cards, the booster bar and secondary text take the
-  sky's colours too (teal under the aurora, ember red in the inferno); buttons that mean something
-  keep their own (green to play, orange for the daily challenge, blue for diamonds)
+- Everything that can be tapped moves like jelly: buttons, booster buttons, the pause button,
+  NEXT, the album strip, shop tabs, even the letters of the title. Under the pointer it swells a
+  little and keeps wobbling; pressed, it squashes flat; let go, it springs back with a bounce.
+  The main button on a screen (PLAY or CONTINUE, RESUME, REVIVE, the daily PLAY) breathes
+  gently at rest
+- Buttons are slim panes of tinted glass: see-through, so the sky shows behind them, a faint
+  sheen over the top and a fine bright edge, no heavy base. Only the main button of a screen is
+  a little more solid, with a soft glow of its colour; the rest share the sky's colours (the
+  daily challenge keeps a warm label). They light up a little while touched
+- Menus belong to the sky: panels are glass in the colours of the background in use, over a
+  tinted veil that lets the moving sky show through, and they pop open with a wobble and shrink
+  away when closed; while one is open over the home screen, the menu under it steps back. Cards,
+  the booster bar, banners and secondary text take the sky's colours too (teal under the aurora,
+  ember red in the inferno)
 - The home screen has no dark veil: the name is made of jelly letters in candy colours that drop
   in and land with a squash, and planets in the skin in use circle the well behind the menu
 

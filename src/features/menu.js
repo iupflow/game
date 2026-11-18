@@ -134,6 +134,7 @@ export const MenuMixin = {
     this.setGameUi(false);
     if (this.hint) this.hint.setVisible(false);
     const items = (this.homeItems = []);
+    this.homeAlpha = 1;
     const add = (o, depth = OVERLAY) => {
       items.push(o.setDepth(depth));
       return o;
@@ -156,42 +157,40 @@ export const MenuMixin = {
     const saved = this.savedGame();
     let y;
     if (saved) {
-      items.push(this.button(W / 2, 770, 440, 104, '▶  CONTINUE', 0x37b24d, () => this.startGame(saved.mode, saved), 42, { breathe: true }));
-      items.push(this.button(W / 2, 884, 440, 74, 'NEW GAME', this.pal.button2, () => this.confirmNewGame('normal'), 28));
-      y = 978;
+      items.push(this.button(W / 2, 770, 420, 86, '▶  CONTINUE', 0x37b24d, () => this.startGame(saved.mode, saved), 36, { breathe: true }));
+      items.push(this.button(W / 2, 866, 420, 62, 'NEW GAME', this.pal.button2, () => this.confirmNewGame('normal'), 24));
+      y = 950;
     } else {
-      items.push(this.button(W / 2, 800, 440, 104, '▶  PLAY', 0x37b24d, () => this.startGame('normal'), 42, { breathe: true }));
-      y = 922;
+      items.push(this.button(W / 2, 800, 420, 86, '▶  PLAY', 0x37b24d, () => this.startGame('normal'), 36, { breathe: true }));
+      y = 900;
     }
     const daily = dailyChallenge();
-    const dailyBtn = this.button(W / 2, y, 440, 80, 'DAILY CHALLENGE', 0xf08c2e, () => this.openDaily(), 28);
+    const dailyBtn = this.button(W / 2, y, 420, 64, 'DAILY CHALLENGE', this.pal.button, () => this.openDaily(), 24, { textColor: '#ffd08a' });
     items.push(dailyBtn);
     // a small badge on the button (it wobbles with it): a dot while today's challenge is open, a tick once done
     const done = Meta.daily(daily.date).done;
-    const badge = this.add.container(206, -34);
+    const badge = this.add.container(196, -28);
     const bg = this.add.graphics();
     bg.fillStyle(done ? 0x2f9e44 : 0xff4d6d, 1);
-    bg.fillCircle(0, 0, 17);
-    bg.fillStyle(0xffffff, 0.35);
-    bg.fillEllipse(-4, -7, 14, 7);
-    bg.lineStyle(3, 0xffffff, 1);
-    bg.strokeCircle(0, 0, 17);
-    badge.add([bg, this.text(0, 1, done ? '✓' : '!', 22).setOrigin(0.5)]);
+    bg.fillCircle(0, 0, 13);
+    bg.lineStyle(1.5, 0xffffff, 0.9);
+    bg.strokeCircle(0, 0, 13);
+    badge.add([bg, this.text(0, 1, done ? '✓' : '!', 17).setOrigin(0.5)]);
     dailyBtn.add(badge);
     if (!done) this.tweens.add({ targets: badge, scale: 1.15, duration: 600, yoyo: true, repeat: -1, ease: 'Sine.inOut' });
-    y += 96;
-    items.push(this.button(W / 2 - 112, y, 208, 74, 'SHOP', this.pal.button, () => this.openShop(), 28));
-    items.push(this.button(W / 2 + 112, y, 208, 74, 'ALBUM', this.pal.button2, () => this.openAlbum(), 28));
+    y += 82;
+    items.push(this.button(W / 2 - 106, y, 202, 62, 'SHOP', this.pal.button, () => this.openShop(), 24));
+    items.push(this.button(W / 2 + 106, y, 202, 62, 'ALBUM', this.pal.button2, () => this.openAlbum(), 24));
     if (!this.premium) {
       items.push(
-        this.button(W / 2, y + 92, 440, 58, 'No Ads + Max Boosters  $2.99', 0x5a3aa8, async () => {
+        this.button(W / 2, y + 76, 420, 50, 'No Ads + Max Boosters  $2.99', 0x7950f2, async () => {
           if (this.premium) return;
           if (await Ads.purchasePremium()) {
             this.applyPremium();
             this.closeHome();
             this.showHome();
           }
-        }, 22),
+        }, 19),
       );
     }
   },
@@ -267,6 +266,7 @@ export const MenuMixin = {
     ];
     const bodies = orbits.map(([kind, r, rx, speed, a]) => {
       const img = this.portrait(CX, CY, kind, r);
+      img.orbiting = true;
       items.push(img);
       return { img, r, rx, ry: rx * 0.3, speed, a, wob: Math.random() * 6 };
     });
@@ -284,11 +284,21 @@ export const MenuMixin = {
         const q = Math.sin(b.wob) * 0.04;
         b.img.setPosition(CX + ox * Math.cos(tilt) - oy * Math.sin(tilt), CY + ox * Math.sin(tilt) + oy * Math.cos(tilt));
         b.img.setScale(k * (1 + q), k * (1 - q));
-        b.img.setDepth(front > 0 ? 12 : 8).setAlpha(0.7 + 0.3 * (front + 1) / 2);
+        b.img.setDepth(front > 0 ? 12 : 8).setAlpha((0.7 + (0.3 * (front + 1)) / 2) * this.homeAlpha);
       }
     };
     this.events.on('update', step);
     this.homeStep = step;
+  },
+
+  /** While a panel is open over the home screen, the menu under it steps back. */
+  fadeHome(on) {
+    if (!this.homeItems) return;
+    this.homeAlpha = on ? 0.12 : 1;
+    for (const o of this.homeItems) {
+      if (!o.active || o.orbiting) continue;
+      this.tweens.add({ targets: o, alpha: this.homeAlpha, duration: 180 });
+    }
   },
 
   closeHome() {
@@ -323,13 +333,13 @@ export const MenuMixin = {
     add(this.text(W / 2, 512, 'START OVER?', 40).setOrigin(0.5));
     add(this.text(W / 2, 566, 'The game you left will be lost', 22, this.pal.light).setOrigin(0.5));
     items.push(
-      this.button(W / 2, 660, 360, 84, mode === 'daily' ? 'PLAY DAILY' : 'NEW GAME', this.pal.button2, () => {
+      this.button(W / 2, 656, 340, 70, mode === 'daily' ? 'PLAY DAILY' : 'NEW GAME', this.pal.button2, () => {
         close();
         Meta.clearSavedGame();
         this.startGame(mode);
-      }, 30),
+      }, 26),
     );
-    items.push(this.button(W / 2, 764, 360, 72, 'KEEP IT', 0x37b24d, close, 26));
+    items.push(this.button(W / 2, 748, 340, 60, 'KEEP IT', 0x37b24d, close, 23));
   },
 
   /** Leave the home screen and play: a normal game or today's challenge, new or continued. */
@@ -465,31 +475,31 @@ export const MenuMixin = {
     const resume = this.holdGame();
     Sfx.click();
     const W = this.W;
-    const items = this.panel(90, 300, W - 180, 620);
+    const items = this.panel(100, 320, W - 200, 540);
     const add = (o) => {
       items.push(o.setDepth(OVERLAY));
       return o;
     };
-    add(this.text(W / 2, 372, 'PAUSED', 50).setOrigin(0.5));
+    add(this.text(W / 2, 388, 'PAUSED', 46).setOrigin(0.5));
     items.push(
-      this.button(W / 2, 486, 400, 92, '▶  RESUME', 0x37b24d, () => this.closePanel(items, resume), 34, { breathe: true }),
+      this.button(W / 2, 486, 380, 76, '▶  RESUME', 0x37b24d, () => this.closePanel(items, resume), 30, { breathe: true }),
     );
-    items.push(this.button(W / 2, 598, 400, 76, 'RESTART', this.pal.button2, () => this.leaveGame(true), 28));
-    items.push(this.button(W / 2, 694, 400, 76, 'HOME', this.pal.button, () => this.leaveGame(false), 28));
+    items.push(this.button(W / 2, 580, 380, 60, 'RESTART', this.pal.button2, () => this.leaveGame(true), 24));
+    items.push(this.button(W / 2, 660, 380, 60, 'HOME', this.pal.button, () => this.leaveGame(false), 24));
     // settings that last between games
     const toggle = (x, name, key, apply) => {
       const label = () => `${name}: ${store.get(key, true) ? 'ON' : 'OFF'}`;
       items.push(
-        this.button(x, 818, 196, 64, label(), this.pal.button, (c, text) => {
+        this.button(x, 768, 184, 52, label(), this.pal.button, (c, text) => {
           const on = !store.get(key, true);
           store.set(key, on);
           apply(on);
           text.setText(label());
-        }, 21),
+        }, 18),
       );
     };
-    toggle(W / 2 - 104, 'SOUND', 'jd3_sound', (on) => Sfx.setMuted(!on));
-    toggle(W / 2 + 104, 'VIBRATION', 'jd3_vibe', (on) => Haptics.setEnabled(on));
+    toggle(W / 2 - 96, 'SOUND', 'jd3_sound', (on) => Sfx.setMuted(!on));
+    toggle(W / 2 + 96, 'VIBRATION', 'jd3_vibe', (on) => Haptics.setEnabled(on));
   },
 
   /** From the pause menu: HOME keeps the game to continue later; RESTART starts a new one. */
@@ -566,12 +576,12 @@ export const MenuMixin = {
       add(this.add.image(label.x + label.width / 2 + 22, 672, 'gem').setScale(0.6 / TEX_SCALE));
     }
     items.push(
-      this.button(W / 2, 780, 400, 96, '▶  PLAY', 0xf08c2e, () => {
+      this.button(W / 2, 776, 380, 78, '▶  PLAY', 0xf08c2e, () => {
         close();
         this.confirmNewGame('daily');
-      }, 38, { breathe: true }),
+      }, 32, { breathe: true }),
     );
-    items.push(this.button(W / 2, 892, 260, 68, 'CLOSE', this.pal.button2, close, 26));
+    items.push(this.button(W / 2, 876, 240, 58, 'CLOSE', this.pal.button2, close, 22));
   },
 
   // ---------- the shop ----------
@@ -590,6 +600,7 @@ export const MenuMixin = {
     };
     const reopen = (t = tab) => {
       items.forEach((o) => o.destroy());
+      this.panelGone();
       this.previewJobs = [];
       this.openShop(t, false);
     };
@@ -597,7 +608,7 @@ export const MenuMixin = {
     const tabs = [['skin', 'PLANETS'], ['theme', 'SKIES'], ['gems', 'DIAMONDS']];
     const tabBtns = {};
     tabs.forEach(([id, label], i) => {
-      const b = this.button(W / 2 + (i - 1) * 210, 256, 198, 62, label, id === tab ? this.pal.button : this.pal.card, () => id !== tab && reopen(id), 22);
+      const b = this.button(W / 2 + (i - 1) * 206, 256, 192, 52, label, this.pal.button, () => id !== tab && reopen(id), 19, { fill: id === tab ? 1.9 : 0.7 });
       if (id !== tab) b.label.setAlpha(0.7);
       tabBtns[id] = b;
       items.push(b);
@@ -605,24 +616,22 @@ export const MenuMixin = {
     const ctx = { items, add, close, reopen, tabBtns };
     if (tab === 'gems') this.shopGems(ctx);
     else this.shopLooks(tab, ctx);
-    items.push(this.button(W / 2, 1090, 260, 66, 'CLOSE', this.pal.button2, close, 26));
+    items.push(this.button(W / 2, 1090, 240, 56, 'CLOSE', this.pal.button2, close, 22));
   },
 
   /** A row in the shop: a card with a picture on the left, a name, a line about it and a button. */
   shopRow(ctx, y, h, highlight) {
     const W = this.W;
     const g = ctx.add(this.add.graphics());
-    g.fillStyle(highlight ? this.pal.cardOn : this.pal.card, 0.82);
+    g.fillStyle(highlight ? this.pal.cardOn : this.pal.card, highlight ? 0.55 : 0.42);
     g.fillRoundedRect(48, y - h / 2, W - 96, h, 20);
-    g.fillStyle(0xffffff, 0.06);
-    g.fillRoundedRect(60, y - h / 2 + 5, W - 120, 22, 11);
-    g.lineStyle(highlight ? 3 : 1.5, highlight ? 0x8ce99a : 0xffffff, highlight ? 1 : 0.12);
+    g.lineStyle(1.5, highlight ? 0x8ce99a : 0xffffff, highlight ? 0.9 : 0.12);
     g.strokeRoundedRect(48, y - h / 2, W - 96, h, 20);
   },
 
   /** A buy button showing a diamond and the price. */
   priceButton(x, y, price, onTap) {
-    const b = this.button(x, y, 132, 56, String(price), 0x1f8fd6, onTap, 24);
+    const b = this.button(x, y, 128, 48, String(price), 0x3d9be9, onTap, 21);
     b.label.x = 14;
     b.add(this.add.image(-34, 0, 'gem').setScale(0.55 / TEX_SCALE));
     return b;
@@ -659,10 +668,10 @@ export const MenuMixin = {
       ctx.add(this.text(234, y + 16, def.text, 16, this.pal.soft).setOrigin(0, 0.5).setWordWrapWidth(272));
       const bx = W - 128;
       if (inUse) {
-        const b = this.button(bx, y, 132, 56, 'IN USE', 0x2f9e44, () => {}, 20);
+        const b = this.button(bx, y, 128, 48, 'IN USE', 0x2f9e44, () => {}, 18);
         ctx.items.push(b);
       } else if (owned) {
-        ctx.items.push(this.button(bx, y, 132, 56, 'USE', this.pal.button2, () => this.useLook(type, def.id), 22));
+        ctx.items.push(this.button(bx, y, 128, 48, 'USE', this.pal.button2, () => this.useLook(type, def.id), 20));
       } else {
         ctx.items.push(
           this.priceButton(bx, y, def.price, () => {
@@ -715,7 +724,7 @@ export const MenuMixin = {
       ctx.add(this.text(220, y - 22, `${pack.gems} diamonds`, 28).setOrigin(0, 0.5));
       if (pack.bonus) ctx.add(this.text(220, y + 18, `${pack.bonus} extra`, 20, '#8ce99a').setOrigin(0, 0.5));
       ctx.items.push(
-        this.button(W - 128, y, 150, 60, pack.price, 0x37b24d, async () => {
+        this.button(W - 128, y, 146, 52, pack.price, 0x37b24d, async () => {
           const ok = await Ads.purchaseGems(pack);
           if (!ok || !balance.active) return;
           this.gainGemsAt(pack.gems, W - 128, y);
